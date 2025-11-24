@@ -1,0 +1,71 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+bin/
+lib/
+dist/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+!cmake/*.cmake
+
+# Compiled files
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# CyxMake cache
+.cyxmake/cache/
+.cyxmake/logs/
+.cyxmake/temp/
+
+# Models (large files)
+*.gguf
+*.bin
+models/*.gguf
+
+# Environment
+.env
+.env.local
+*.log
+
+# Testing
+tests/output/
+*.gcda
+*.gcno
+*.gcov
+
+# Package managers
+node_modules/
+venv/
+__pycache__/
+*.pyc
+
+# Documentation build
+docs/_build/
+docs/html/
+docs/latex/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
