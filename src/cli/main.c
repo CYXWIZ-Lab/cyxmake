@@ -3,7 +3,6 @@
  * @brief CyxMake CLI entry point
  */
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "cyxmake/cyxmake.h"
@@ -11,44 +10,44 @@
 #include "cyxmake/llm_interface.h"
 
 static void print_version(void) {
-    printf("CyxMake version %s\n", cyxmake_version());
-    printf("AI-Powered Build Automation System\n");
-    printf("\n");
-    printf("Copyright (C) 2025 CyxMake Team\n");
-    printf("Licensed under Apache License 2.0\n");
+    log_plain("CyxMake version %s\n", cyxmake_version());
+    log_plain("AI-Powered Build Automation System\n");
+    log_plain("\n");
+    log_plain("Copyright (C) 2025 CyxMake Team\n");
+    log_plain("Licensed under Apache License 2.0\n");
 }
 
 static void print_help(const char* program_name) {
-    printf("Usage: %s [command] [options]\n", program_name);
-    printf("\n");
-    printf("AI-Powered Build Automation System\n");
-    printf("\n");
-    printf("Commands:\n");
-    printf("  init              Initialize project (analyze and create cache)\n");
-    printf("  build             Build the project\n");
-    printf("  create            Create new project from natural language\n");
-    printf("  doctor            Check project health\n");
-    printf("  status            Show project status\n");
-    printf("  clean             Clean build artifacts\n");
-    printf("  cache             Manage project cache\n");
-    printf("  config            Manage configuration\n");
-    printf("  test-llm          Test LLM integration (requires model)\n");
-    printf("  help              Show this help message\n");
-    printf("  version           Show version information\n");
-    printf("\n");
-    printf("Options:\n");
-    printf("  -v, --verbose     Enable verbose output\n");
-    printf("  -q, --quiet       Suppress output\n");
-    printf("  --version         Show version and exit\n");
-    printf("  --help            Show help and exit\n");
-    printf("\n");
-    printf("Examples:\n");
-    printf("  %s init                    # Analyze current directory\n", program_name);
-    printf("  %s build                   # Build project\n", program_name);
-    printf("  %s create \"C++ game engine\" # Create new project\n", program_name);
-    printf("\n");
-    printf("Documentation: https://docs.cyxmake.com\n");
-    printf("Report issues: https://github.com/cyxmake/cyxmake/issues\n");
+    log_plain("Usage: %s [command] [options]\n", program_name);
+    log_plain("\n");
+    log_plain("AI-Powered Build Automation System\n");
+    log_plain("\n");
+    log_plain("Commands:\n");
+    log_plain("  init              Initialize project (analyze and create cache)\n");
+    log_plain("  build             Build the project\n");
+    log_plain("  create            Create new project from natural language\n");
+    log_plain("  doctor            Check project health\n");
+    log_plain("  status            Show project status\n");
+    log_plain("  clean             Clean build artifacts\n");
+    log_plain("  cache             Manage project cache\n");
+    log_plain("  config            Manage configuration\n");
+    log_plain("  test-llm          Test LLM integration (requires model)\n");
+    log_plain("  help              Show this help message\n");
+    log_plain("  version           Show version information\n");
+    log_plain("\n");
+    log_plain("Options:\n");
+    log_plain("  -v, --verbose     Enable verbose output\n");
+    log_plain("  -q, --quiet       Suppress output\n");
+    log_plain("  --version         Show version and exit\n");
+    log_plain("  --help            Show help and exit\n");
+    log_plain("\n");
+    log_plain("Examples:\n");
+    log_plain("  %s init                    # Analyze current directory\n", program_name);
+    log_plain("  %s build                   # Build project\n", program_name);
+    log_plain("  %s create \"C++ game engine\" # Create new project\n", program_name);
+    log_plain("\n");
+    log_plain("Documentation: https://docs.cyxmake.com\n");
+    log_plain("Report issues: https://github.com/cyxmake/cyxmake/issues\n");
 }
 
 int main(int argc, char** argv) {
