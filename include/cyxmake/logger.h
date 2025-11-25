@@ -35,6 +35,7 @@ typedef struct {
     bool show_timestamp;    /* Show timestamps */
     bool show_level;        /* Show log level prefix */
     FILE* output;           /* Output stream (stdout/stderr) */
+    const char* log_file;   /* Optional log file path (NULL to disable file logging) */
 } LogConfig;
 
 /**
@@ -145,6 +146,19 @@ void log_step(int current, int total, const char* format, ...);
  * @return String representation
  */
 const char* log_level_to_string(LogLevel level);
+
+/**
+ * Enable file logging
+ * @param file_path Path to log file (NULL to disable)
+ * @return True if successful, false on error
+ */
+bool log_set_file(const char* file_path);
+
+/**
+ * Get current log file path
+ * @return Current log file path (NULL if not set)
+ */
+const char* log_get_file(void);
 
 #ifdef __cplusplus
 }

@@ -1,6 +1,24 @@
 # CyxMake Tests
 
-message(STATUS "Tests will be added in Phase 1")
+# Logger test executable
+add_executable(test_logger test_logger.c)
+target_link_libraries(test_logger PRIVATE cyxmake_core)
+target_include_directories(test_logger PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
-# TODO: Add unit tests
+# Set output directory
+set_target_properties(test_logger PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+
+# Copy to bin directory for easy access
+add_custom_command(TARGET test_logger POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        $<TARGET_FILE:test_logger>
+        ${CMAKE_BINARY_DIR}/bin/test_logger${CMAKE_EXECUTABLE_SUFFIX}
+    COMMENT "Copying test_logger to bin directory"
+)
+
+message(STATUS "Tests configured: test_logger")
+
+# TODO: Add more unit tests
 # TODO: Add integration tests

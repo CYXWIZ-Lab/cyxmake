@@ -10,6 +10,11 @@
 #include <string.h>
 #include <time.h>
 
+/* strdup is not ANSI C, provide implementation if needed */
+#if defined(_WIN32) && !defined(__MINGW32__)
+    #define strdup _strdup
+#endif
+
 #ifdef _WIN32
     #include <windows.h>
     #include <io.h>
@@ -30,6 +35,9 @@
 #define COLOR_GRAY    "\033[90m"
 #define COLOR_BOLD    "\033[1m"
 
+/* Forward declarations */
+static void write_to_file(LogLevel level, const char* format, va_list args);
+
 /* Global logger state */
 static struct {
     LogLevel min_level;
@@ -37,6 +45,8 @@ static struct {
     bool show_timestamp;
     bool show_level;
     FILE* output;
+    FILE* log_file;
+    char* log_file_path;
     bool initialized;
 } g_logger = {
     .min_level = LOG_LEVEL_INFO,
@@ -44,6 +54,8 @@ static struct {
     .show_timestamp = false,
     .show_level = true,
     .output = NULL,
+    .log_file = NULL,
+    .log_file_path = NULL,
     .initialized = false
 };
 
@@ -78,6 +90,11 @@ void log_init(const LogConfig* config) {
         g_logger.show_timestamp = config->show_timestamp;
         g_logger.show_level = config->show_level;
         g_logger.output = config->output ? config->output : stdout;
+
+        /* Open log file if specified */
+        if (config->log_file) {
+            log_set_file(config->log_file);
+        }
     } else {
         /* Default configuration */
         g_logger.min_level = LOG_LEVEL_INFO;
@@ -97,6 +114,18 @@ void log_init(const LogConfig* config) {
 
 /* Shutdown logger */
 void log_shutdown(void) {
+    /* Close log file if open */
+    if (g_logger.log_file) {
+        fclose(g_logger.log_file);
+        g_logger.log_file = NULL;
+    }
+
+    /* Free log file path */
+    if (g_logger.log_file_path) {
+        free(g_logger.log_file_path);
+        g_logger.log_file_path = NULL;
+    }
+
     g_logger.initialized = false;
 }
 
@@ -197,6 +226,14 @@ void log_message(LogLevel level, const char* format, ...) {
 
     fprintf(out, "\n");
     fflush(out);
+
+    /* Also write to file if enabled */
+    if (g_logger.log_file) {
+        va_list args_file;
+        va_start(args_file, format);
+        write_to_file(level, format, args_file);
+        va_end(args_file);
+    }
 }
 
 /* Debug message */
@@ -205,7 +242,10 @@ void log_debug(const char* format, ...) {
     if (LOG_LEVEL_DEBUG < g_logger.min_level) return;
 
     FILE* out = g_logger.output;
-    fprintf(out, "%s[DEBUG]%s ", COLOR_GRAY, COLOR_RESET);
+    const char* color = g_logger.use_colors ? COLOR_GRAY : "";
+    const char* reset = g_logger.use_colors ? COLOR_RESET : "";
+
+    fprintf(out, "%s[DEBUG]%s ", color, reset);
 
     va_list args;
     va_start(args, format);
@@ -214,6 +254,14 @@ void log_debug(const char* format, ...) {
 
     fprintf(out, "\n");
     fflush(out);
+
+    /* Also write to file */
+    if (g_logger.log_file) {
+        va_list args_file;
+        va_start(args_file, format);
+        write_to_file(LOG_LEVEL_DEBUG, format, args_file);
+        va_end(args_file);
+    }
 }
 
 /* Info message */
@@ -230,6 +278,14 @@ void log_info(const char* format, ...) {
 
     fprintf(out, "\n");
     fflush(out);
+
+    /* Also write to file */
+    if (g_logger.log_file) {
+        va_list args_file;
+        va_start(args_file, format);
+        write_to_file(LOG_LEVEL_INFO, format, args_file);
+        va_end(args_file);
+    }
 }
 
 /* Success message */
@@ -250,6 +306,14 @@ void log_success(const char* format, ...) {
 
     fprintf(out, "%s\n", reset);
     fflush(out);
+
+    /* Also write to file */
+    if (g_logger.log_file) {
+        va_list args_file;
+        va_start(args_file, format);
+        write_to_file(LOG_LEVEL_SUCCESS, format, args_file);
+        va_end(args_file);
+    }
 }
 
 /* Warning message */
@@ -270,6 +334,14 @@ void log_warning(const char* format, ...) {
 
     fprintf(out, "%s\n", reset);
     fflush(out);
+
+    /* Also write to file */
+    if (g_logger.log_file) {
+        va_list args_file;
+        va_start(args_file, format);
+        write_to_file(LOG_LEVEL_WARNING, format, args_file);
+        va_end(args_file);
+    }
 }
 
 /* Error message */
@@ -289,6 +361,14 @@ void log_error(const char* format, ...) {
 
     fprintf(out, "%s\n", reset);
     fflush(out);
+
+    /* Also write to file */
+    if (g_logger.log_file) {
+        va_list args_file;
+        va_start(args_file, format);
+        write_to_file(LOG_LEVEL_ERROR, format, args_file);
+        va_end(args_file);
+    }
 }
 
 /* Plain message (no formatting) */
@@ -339,4 +419,71 @@ void log_step(int current, int total, const char* format, ...) {
 
     fprintf(out, "\n");
     fflush(out);
+
+    /* Also write to file if enabled (without colors) */
+    if (g_logger.log_file) {
+        fprintf(g_logger.log_file, "  [%d/%d] ", current, total);
+        va_list args_file;
+        va_start(args_file, format);
+        vfprintf(g_logger.log_file, format, args_file);
+        va_end(args_file);
+        fprintf(g_logger.log_file, "\n");
+        fflush(g_logger.log_file);
+    }
+}
+
+/* Helper to write to log file */
+static void write_to_file(LogLevel level, const char* format, va_list args) {
+    if (!g_logger.log_file) return;
+
+    /* Write timestamp */
+    time_t now = time(NULL);
+    struct tm* tm_info = localtime(&now);
+    char time_buf[32];
+    strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", tm_info);
+    fprintf(g_logger.log_file, "[%s] ", time_buf);
+
+    /* Write level */
+    fprintf(g_logger.log_file, "%s ", get_level_prefix(level));
+
+    /* Write message */
+    vfprintf(g_logger.log_file, format, args);
+    fprintf(g_logger.log_file, "\n");
+    fflush(g_logger.log_file);
+}
+
+/* Set log file */
+bool log_set_file(const char* file_path) {
+    /* Close existing file if open */
+    if (g_logger.log_file) {
+        fclose(g_logger.log_file);
+        g_logger.log_file = NULL;
+    }
+
+    /* Free existing path */
+    if (g_logger.log_file_path) {
+        free(g_logger.log_file_path);
+        g_logger.log_file_path = NULL;
+    }
+
+    /* Disable file logging if NULL */
+    if (!file_path) {
+        return true;
+    }
+
+    /* Open new log file */
+    g_logger.log_file = fopen(file_path, "a");
+    if (!g_logger.log_file) {
+        return false;
+    }
+
+    /* Save path */
+    g_logger.log_file_path = strdup(file_path);
+
+    return true;
+}
+
+/* Get log file path */
+const char* log_get_file(void) {
+    return g_logger.log_file_path;
 }
