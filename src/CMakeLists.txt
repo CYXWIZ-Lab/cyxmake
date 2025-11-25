@@ -14,13 +14,15 @@ set(CYXMAKE_CORE_SOURCES
     llm/prompt_templates.c
     llm/error_analyzer.c
 
+    # Phase 1: Error Recovery System
+    recovery/error_diagnosis.c
+    recovery/error_patterns.c
+    recovery/solution_generator.c
+    recovery/fix_executor.c
+
     # TODO Phase 1: Add remaining files when implemented
     # core/config.c
     # context/change_detector.c
-    # recovery/error_diagnosis.c
-    # recovery/error_patterns.c
-    # recovery/solution_generator.c
-    # recovery/fix_executor.c
     # llm/llm_local.c
     # llm/llm_cloud.c
     # tools/tool_registry.c

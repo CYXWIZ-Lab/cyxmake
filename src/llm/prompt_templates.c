@@ -196,6 +196,8 @@ char* prompt_optimize_build(const ProjectContext* ctx, double build_time) {
 
     const char* build_sys = build_system_to_string(ctx->build_system.type);
 
+    const char* lang_str = language_to_string(ctx->primary_language);
+
     snprintf(prompt, MAX_PROMPT_SIZE,
         "My %s project using %s takes %.1f seconds to build.\n"
         "Project size: %zu source files\n"
@@ -206,11 +208,11 @@ char* prompt_optimize_build(const ProjectContext* ctx, double build_time) {
         "3. Caching strategies\n"
         "4. Incremental build improvements\n\n"
         "Focus on practical changes with the biggest impact.",
-        ctx->primary_language ? ctx->primary_language : "code",
+        lang_str,
         build_sys,
         build_time,
-        ctx->source_files_count,
-        ctx->primary_language ? ctx->primary_language : "unknown"
+        ctx->source_file_count,
+        lang_str
     );
 
     return prompt;
@@ -377,13 +379,13 @@ char* prompt_smart_error_analysis(const char* error_output,
             /* Fall back to general error analysis */
             return prompt_analyze_build_error(error_output,
                                                ctx ? ctx->build_system.type : BUILD_UNKNOWN,
-                                               ctx ? ctx->primary_language : NULL);
+                                               ctx ? language_to_string(ctx->primary_language) : NULL);
     }
 
     /* Default fallback */
     return prompt_analyze_build_error(error_output,
                                        ctx ? ctx->build_system.type : BUILD_UNKNOWN,
-                                       ctx ? ctx->primary_language : NULL);
+                                       ctx ? language_to_string(ctx->primary_language) : NULL);
 }
 
 /**
