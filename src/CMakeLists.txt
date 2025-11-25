@@ -11,6 +11,8 @@ set(CYXMAKE_CORE_SOURCES
 
     # Phase 1: LLM Integration
     llm/llm_interface.c
+    llm/prompt_templates.c
+    llm/error_analyzer.c
 
     # TODO Phase 1: Add remaining files when implemented
     # core/config.c
@@ -21,7 +23,6 @@ set(CYXMAKE_CORE_SOURCES
     # recovery/fix_executor.c
     # llm/llm_local.c
     # llm/llm_cloud.c
-    # llm/prompt_templates.c
     # tools/tool_registry.c
     # tools/tool_executor.c
     # tools/tool_discovery.c
