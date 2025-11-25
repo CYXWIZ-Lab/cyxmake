@@ -20,14 +20,16 @@ set(CYXMAKE_CORE_SOURCES
     recovery/solution_generator.c
     recovery/fix_executor.c
 
+    # Phase 1: Tool Executor System
+    tools/tool_registry.c
+    tools/tool_discovery.c
+    tools/tool_executor.c
+
     # TODO Phase 1: Add remaining files when implemented
     # core/config.c
     # context/change_detector.c
     # llm/llm_local.c
     # llm/llm_cloud.c
-    # tools/tool_registry.c
-    # tools/tool_executor.c
-    # tools/tool_discovery.c
 )
 
 # Create core library

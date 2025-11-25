@@ -36,7 +36,25 @@ add_custom_command(TARGET test_error_recovery POST_BUILD
     COMMENT "Copying test_error_recovery to bin directory"
 )
 
-message(STATUS "Tests configured: test_logger, test_error_recovery")
+# Tool Executor test executable
+add_executable(test_tool_executor test_tool_executor.c)
+target_link_libraries(test_tool_executor PRIVATE cyxmake_core)
+target_include_directories(test_tool_executor PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+# Set output directory
+set_target_properties(test_tool_executor PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+
+# Copy to bin directory for easy access
+add_custom_command(TARGET test_tool_executor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        $<TARGET_FILE:test_tool_executor>
+        ${CMAKE_BINARY_DIR}/bin/test_tool_executor${CMAKE_EXECUTABLE_SUFFIX}
+    COMMENT "Copying test_tool_executor to bin directory"
+)
+
+message(STATUS "Tests configured: test_logger, test_error_recovery, test_tool_executor")
 
 # TODO: Add more unit tests
 # TODO: Add integration tests
