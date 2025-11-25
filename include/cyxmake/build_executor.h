@@ -72,6 +72,27 @@ BuildResult* build_execute_command(const char* command, const char* working_dir)
 char* build_get_command(BuildSystem build_system, const BuildOptions* opts);
 
 /**
+ * Validate that build system tools are available
+ * @param build_system Build system to validate
+ * @return True if build system is available
+ */
+bool build_validate_system(BuildSystem build_system);
+
+/**
+ * Find build directory for a project
+ * @param project_path Project root path
+ * @param build_system Build system type
+ * @return Allocated path to build directory (caller must free), or NULL
+ */
+char* build_find_directory(const char* project_path, BuildSystem build_system);
+
+/**
+ * Get number of CPU cores for parallel builds
+ * @return Number of cores (minimum 1)
+ */
+int build_get_cpu_cores(void);
+
+/**
  * Free build result
  * @param result Build result to free
  */

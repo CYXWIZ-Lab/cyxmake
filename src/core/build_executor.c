@@ -14,10 +14,13 @@
 #ifdef _WIN32
     #include <windows.h>
     #include <direct.h>
+    #include <io.h>
     #define popen _popen
     #define pclose _pclose
     #define getcwd _getcwd
     #define chdir _chdir
+    #define access _access
+    #define F_OK 0
 #else
     #include <sys/wait.h>
     #include <unistd.h>
@@ -289,22 +292,230 @@ BuildResult* build_execute_command(const char* command, const char* working_dir)
 BuildResult* build_execute(const ProjectContext* ctx, const BuildOptions* opts) {
     if (!ctx) return NULL;
 
+    /* Validate build system */
+    if (!build_validate_system(ctx->build_system.type)) {
+        BuildResult* result = calloc(1, sizeof(BuildResult));
+        if (result) {
+            result->success = false;
+            result->exit_code = -1;
+            result->stdout_output = strdup("");
+
+            const char* tool = build_system_to_string(ctx->build_system.type);
+            char error_msg[512];
+            snprintf(error_msg, sizeof(error_msg),
+                     "Build system '%s' is not installed or not in PATH.\n"
+                     "Please install the required tools and try again.", tool);
+            result->stderr_output = strdup(error_msg);
+
+            log_error("Build system not available: %s", tool);
+
+            /* Provide installation hints */
+            switch (ctx->build_system.type) {
+                case BUILD_CMAKE:
+                    log_info("Install CMake from: https://cmake.org/download/");
+                    break;
+                case BUILD_NPM:
+                    log_info("Install Node.js/npm from: https://nodejs.org/");
+                    break;
+                case BUILD_CARGO:
+                    log_info("Install Rust from: https://rustup.rs/");
+                    break;
+                case BUILD_POETRY:
+                    log_info("Install Poetry: pip install poetry");
+                    break;
+                default:
+                    break;
+            }
+        }
+        return result;
+    }
+
+    /* Create default options if not provided */
+    BuildOptions* default_opts = NULL;
+    if (!opts) {
+        default_opts = build_options_default();
+        opts = default_opts;
+
+        /* Auto-detect parallel jobs if not specified */
+        if (opts && opts->parallel_jobs == 0) {
+            int cores = build_get_cpu_cores();
+            /* Use n-1 cores, minimum 1 */
+            ((BuildOptions*)opts)->parallel_jobs = cores > 1 ? cores - 1 : 1;
+            log_debug("Auto-detected %d CPU cores, using %d parallel jobs",
+                      cores, opts->parallel_jobs);
+        }
+    }
+
+    /* Find build directory */
+    char* build_dir = NULL;
+    if (!opts->build_dir) {
+        build_dir = build_find_directory(ctx->root_path, ctx->build_system.type);
+        if (build_dir) {
+            log_debug("Using build directory: %s", build_dir);
+        }
+    }
+
     /* Get build command */
     char* command = build_get_command(ctx->build_system.type, opts);
     if (!command) {
         log_error("Unsupported build system: %s",
                   build_system_to_string(ctx->build_system.type));
+        free(build_dir);
+        if (default_opts) build_options_free(default_opts);
         return NULL;
     }
 
     log_info("Build system: %s", build_system_to_string(ctx->build_system.type));
     log_info("Build command: %s", command);
 
+    /* Use build directory if found, otherwise use project root */
+    const char* working_dir = opts->build_dir ? opts->build_dir :
+                             (build_dir ? build_dir : ctx->root_path);
+
     /* Execute command */
-    BuildResult* result = build_execute_command(command, ctx->root_path);
+    log_plain("\n");
+    BuildResult* result = build_execute_command(command, working_dir);
+
     free(command);
+    free(build_dir);
+    if (default_opts) build_options_free(default_opts);
 
     return result;
+}
+
+/* Check if a command exists in PATH */
+static bool command_exists(const char* cmd) {
+    char test_cmd[512];
+#ifdef _WIN32
+    snprintf(test_cmd, sizeof(test_cmd), "where %s >nul 2>&1", cmd);
+#else
+    snprintf(test_cmd, sizeof(test_cmd), "which %s >/dev/null 2>&1", cmd);
+#endif
+    return system(test_cmd) == 0;
+}
+
+/* Validate build system availability */
+bool build_validate_system(BuildSystem build_system) {
+    switch (build_system) {
+        case BUILD_CMAKE:
+            return command_exists("cmake");
+        case BUILD_MAKE:
+            return command_exists("make");
+        case BUILD_CARGO:
+            return command_exists("cargo");
+        case BUILD_NPM:
+            return command_exists("npm");
+        case BUILD_MAVEN:
+            return command_exists("mvn");
+        case BUILD_GRADLE:
+#ifdef _WIN32
+            return command_exists("gradlew.bat") || command_exists("gradle");
+#else
+            return command_exists("./gradlew") || command_exists("gradle");
+#endif
+        case BUILD_MESON:
+            return command_exists("meson") && command_exists("ninja");
+        case BUILD_BAZEL:
+            return command_exists("bazel");
+        case BUILD_SETUPTOOLS:
+            return command_exists("python") || command_exists("python3");
+        case BUILD_POETRY:
+            return command_exists("poetry");
+        default:
+            return false;
+    }
+}
+
+/* Find build directory */
+char* build_find_directory(const char* project_path, BuildSystem build_system) {
+    if (!project_path) project_path = ".";
+
+    char* build_dir = malloc(512);
+    if (!build_dir) return NULL;
+
+    /* Check common build directory patterns */
+    const char* common_dirs[] = {
+        "build",
+        "_build",
+        "Build",
+        "out",
+        "output",
+        "cmake-build",
+        "cmake-build-debug",
+        "cmake-build-release",
+        "target",  /* Rust/Java */
+        "dist",    /* Python/JS */
+        NULL
+    };
+
+    /* Check build-system-specific directories */
+    switch (build_system) {
+        case BUILD_CMAKE: {
+            /* Look for CMakeCache.txt */
+            for (const char** dir = common_dirs; *dir; dir++) {
+                snprintf(build_dir, 512, "%s/%s/CMakeCache.txt", project_path, *dir);
+                if (access(build_dir, F_OK) == 0) {
+                    snprintf(build_dir, 512, "%s/%s", project_path, *dir);
+                    return build_dir;
+                }
+            }
+            /* Default to "build" */
+            snprintf(build_dir, 512, "%s/build", project_path);
+            return build_dir;
+        }
+
+        case BUILD_CARGO:
+            snprintf(build_dir, 512, "%s/target", project_path);
+            /* Check if directory exists */
+            if (access(build_dir, F_OK) != 0) {
+                snprintf(build_dir, 512, "%s", project_path);
+            }
+            return build_dir;
+
+        case BUILD_MAVEN:
+        case BUILD_GRADLE:
+            snprintf(build_dir, 512, "%s/target", project_path);
+            /* Check if directory exists */
+            if (access(build_dir, F_OK) != 0) {
+                snprintf(build_dir, 512, "%s", project_path);
+            }
+            return build_dir;
+
+        case BUILD_NPM:
+            /* npm builds from project root, not dist */
+            snprintf(build_dir, 512, "%s", project_path);
+            return build_dir;
+
+        case BUILD_MESON: {
+            /* Look for build.ninja */
+            for (const char** dir = common_dirs; *dir; dir++) {
+                snprintf(build_dir, 512, "%s/%s/build.ninja", project_path, *dir);
+                if (access(build_dir, F_OK) == 0) {
+                    snprintf(build_dir, 512, "%s/%s", project_path, *dir);
+                    return build_dir;
+                }
+            }
+            snprintf(build_dir, 512, "%s/builddir", project_path);
+            return build_dir;
+        }
+
+        default:
+            /* Use project root as build directory */
+            snprintf(build_dir, 512, "%s", project_path);
+            return build_dir;
+    }
+}
+
+/* Get number of CPU cores */
+int build_get_cpu_cores(void) {
+#ifdef _WIN32
+    SYSTEM_INFO sysinfo;
+    GetSystemInfo(&sysinfo);
+    return (int)sysinfo.dwNumberOfProcessors;
+#else
+    int cores = sysconf(_SC_NPROCESSORS_ONLN);
+    return cores > 0 ? cores : 1;
+#endif
 }
 
 /* Free build result */
