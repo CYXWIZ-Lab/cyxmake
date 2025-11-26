@@ -5,6 +5,7 @@ set(CYXMAKE_CORE_SOURCES
     core/orchestrator.c
     core/logger.c
     core/build_executor.c
+    core/file_ops.c
     context/project_context.c
     context/project_analyzer.c
     context/cache_manager.c
@@ -72,8 +73,16 @@ if(CYXMAKE_USE_SANITIZERS AND NOT MSVC)
     target_link_options(cyxmake_core PRIVATE -fsanitize=address,undefined)
 endif()
 
+# CLI sources (REPL, slash commands, permissions)
+set(CYXMAKE_CLI_SOURCES
+    cli/main.c
+    cli/repl.c
+    cli/slash_commands.c
+    cli/permission.c
+)
+
 # Main executable
-add_executable(cyxmake cli/main.c)
+add_executable(cyxmake ${CYXMAKE_CLI_SOURCES})
 
 target_link_libraries(cyxmake PRIVATE cyxmake_core)
 

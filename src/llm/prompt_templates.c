@@ -3,12 +3,15 @@
  * @brief LLM prompt templates for build error analysis
  */
 
+#include "cyxmake/prompt_templates.h"
 #include "cyxmake/llm_interface.h"
 #include "cyxmake/project_context.h"
 #include "cyxmake/logger.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <ctype.h>
+#include <stdbool.h>
 
 /* Maximum prompt size */
 #define MAX_PROMPT_SIZE 8192
@@ -398,4 +401,451 @@ char* format_llm_response(const char* response) {
 
     /* For now, just return a copy. Could add formatting later */
     return strdup(response);
+}
+
+/* ========================================================================
+ * Natural Language Command Parsing
+ * ======================================================================== */
+
+#ifdef _WIN32
+    #define strcasecmp _stricmp
+    #define strncasecmp _strnicmp
+#endif
+
+/* Helper to check if string contains word (case-insensitive) */
+static bool contains_word(const char* str, const char* word) {
+    if (!str || !word) return false;
+
+    char* lower_str = strdup(str);
+    char* lower_word = strdup(word);
+
+    /* Convert to lowercase */
+    for (char* p = lower_str; *p; p++) *p = (char)tolower(*p);
+    for (char* p = lower_word; *p; p++) *p = (char)tolower(*p);
+
+    bool found = strstr(lower_str, lower_word) != NULL;
+
+    free(lower_str);
+    free(lower_word);
+    return found;
+}
+
+/* Helper to extract file path or target from input */
+static char* extract_target(const char* input) {
+    if (!input) return NULL;
+
+    /* Look for common file extensions */
+    const char* extensions[] = {
+        ".c", ".cpp", ".h", ".hpp", ".md", ".txt", ".json", ".yaml", ".yml",
+        ".cmake", ".py", ".rs", ".go", ".js", ".ts", NULL
+    };
+
+    /* Find any word that looks like a file */
+    char* copy = strdup(input);
+    char* token = strtok(copy, " \t\n");
+
+    while (token) {
+        /* Check if it has an extension */
+        for (int i = 0; extensions[i]; i++) {
+            if (strstr(token, extensions[i])) {
+                char* result = strdup(token);
+                free(copy);
+                return result;
+            }
+        }
+
+        /* Check if it looks like a path */
+        if (strchr(token, '/') || strchr(token, '\\')) {
+            char* result = strdup(token);
+            free(copy);
+            return result;
+        }
+
+        token = strtok(NULL, " \t\n");
+    }
+
+    free(copy);
+    return NULL;
+}
+
+/* Helper to extract package name after "install" keyword */
+static char* extract_package_name(const char* input) {
+    if (!input) return NULL;
+
+    /* Find "install" keyword and get the next word(s) */
+    char* lower = strdup(input);
+    for (char* p = lower; *p; p++) *p = (char)tolower(*p);
+
+    const char* keywords[] = {"install", "add", "get", NULL};
+    char* result = NULL;
+
+    for (int i = 0; keywords[i]; i++) {
+        char* pos = strstr(lower, keywords[i]);
+        if (pos) {
+            /* Skip past the keyword */
+            pos += strlen(keywords[i]);
+
+            /* Skip whitespace */
+            while (*pos == ' ' || *pos == '\t') pos++;
+
+            /* Skip common filler words */
+            const char* fillers[] = {"package", "library", "lib", "the", "a", NULL};
+            for (int j = 0; fillers[j]; j++) {
+                size_t flen = strlen(fillers[j]);
+                if (strncmp(pos, fillers[j], flen) == 0 && (pos[flen] == ' ' || pos[flen] == '\t')) {
+                    pos += flen;
+                    while (*pos == ' ' || *pos == '\t') pos++;
+                }
+            }
+
+            /* Extract the package name (rest until end or common stopwords) */
+            if (*pos) {
+                /* Find end of package name */
+                const char* end = pos;
+                while (*end && *end != ' ' && *end != '\t' && *end != '\n') end++;
+
+                size_t len = end - pos;
+                if (len > 0) {
+                    /* Calculate offset in original string */
+                    size_t offset = pos - lower;
+                    result = malloc(len + 1);
+                    strncpy(result, input + offset, len);
+                    result[len] = '\0';
+                }
+            }
+            break;
+        }
+    }
+
+    free(lower);
+    return result;
+}
+
+/* Parse a natural language command locally (fast, no AI) */
+ParsedCommand* parse_command_local(const char* input) {
+    if (!input || strlen(input) == 0) return NULL;
+
+    ParsedCommand* cmd = calloc(1, sizeof(ParsedCommand));
+    if (!cmd) return NULL;
+
+    cmd->intent = INTENT_UNKNOWN;
+    cmd->confidence = 0.0;
+
+    /* Clean keywords - check before build since "clean up the build" should match clean */
+    if (contains_word(input, "clean") ||
+        contains_word(input, "clear") ||
+        contains_word(input, "remove build") ||
+        contains_word(input, "delete build")) {
+        cmd->intent = INTENT_CLEAN;
+        cmd->confidence = 0.9;
+    }
+    /* Build keywords */
+    else if (contains_word(input, "build") ||
+             contains_word(input, "compile") ||
+             contains_word(input, "make")) {
+        cmd->intent = INTENT_BUILD;
+        cmd->confidence = 0.9;
+    }
+    /* Initialize keywords */
+    else if (contains_word(input, "init") ||
+             contains_word(input, "analyze") ||
+             contains_word(input, "scan") ||
+             contains_word(input, "detect")) {
+        cmd->intent = INTENT_INIT;
+        cmd->confidence = 0.85;
+    }
+    /* Test keywords */
+    else if (contains_word(input, "test") ||
+             contains_word(input, "run test") ||
+             contains_word(input, "check")) {
+        cmd->intent = INTENT_TEST;
+        cmd->confidence = 0.85;
+    }
+    /* Create file keywords */
+    else if (contains_word(input, "create") ||
+             contains_word(input, "new file") ||
+             contains_word(input, "generate") ||
+             contains_word(input, "make a") ||
+             contains_word(input, "write")) {
+        cmd->intent = INTENT_CREATE_FILE;
+        cmd->confidence = 0.8;
+        cmd->target = extract_target(input);
+    }
+    /* Read file keywords */
+    else if (contains_word(input, "read") ||
+             contains_word(input, "show") ||
+             contains_word(input, "display") ||
+             contains_word(input, "cat") ||
+             contains_word(input, "view") ||
+             contains_word(input, "open")) {
+        cmd->intent = INTENT_READ_FILE;
+        cmd->confidence = 0.8;
+        cmd->target = extract_target(input);
+    }
+    /* Explain keywords */
+    else if (contains_word(input, "explain") ||
+             contains_word(input, "what is") ||
+             contains_word(input, "what does") ||
+             contains_word(input, "how does") ||
+             contains_word(input, "why")) {
+        cmd->intent = INTENT_EXPLAIN;
+        cmd->confidence = 0.75;
+    }
+    /* Fix keywords */
+    else if (contains_word(input, "fix") ||
+             contains_word(input, "repair") ||
+             contains_word(input, "solve") ||
+             contains_word(input, "debug")) {
+        cmd->intent = INTENT_FIX;
+        cmd->confidence = 0.85;
+    }
+    /* Install keywords */
+    else if (contains_word(input, "install") ||
+             contains_word(input, "add package") ||
+             contains_word(input, "get package") ||
+             contains_word(input, "add dependency")) {
+        cmd->intent = INTENT_INSTALL;
+        cmd->confidence = 0.9;
+        cmd->target = extract_package_name(input);  /* Use package-aware extraction */
+    }
+    /* Status keywords */
+    else if (contains_word(input, "status") ||
+             contains_word(input, "info") ||
+             contains_word(input, "state")) {
+        cmd->intent = INTENT_STATUS;
+        cmd->confidence = 0.9;
+    }
+    /* Help keywords */
+    else if (contains_word(input, "help") ||
+             contains_word(input, "how to") ||
+             contains_word(input, "usage")) {
+        cmd->intent = INTENT_HELP;
+        cmd->confidence = 0.9;
+    }
+
+    /* Store the full input as details */
+    cmd->details = strdup(input);
+
+    return cmd;
+}
+
+/* Generate prompt for AI command parsing */
+char* prompt_parse_command(const char* user_input) {
+    if (!user_input) return NULL;
+
+    char* prompt = malloc(MAX_PROMPT_SIZE);
+    if (!prompt) return NULL;
+
+    snprintf(prompt, MAX_PROMPT_SIZE,
+        "You are a build system assistant. Parse this user command and respond with ONLY a JSON object.\n\n"
+        "User command: \"%s\"\n\n"
+        "Respond with JSON in this exact format:\n"
+        "{\n"
+        "  \"intent\": \"<one of: build, init, clean, test, create_file, read_file, explain, fix, install, status, help, unknown>\",\n"
+        "  \"target\": \"<file path, package name, or null>\",\n"
+        "  \"details\": \"<brief description of what to do>\"\n"
+        "}\n\n"
+        "Examples:\n"
+        "- \"build the project\" -> {\"intent\": \"build\", \"target\": null, \"details\": \"compile the project\"}\n"
+        "- \"create readme.md\" -> {\"intent\": \"create_file\", \"target\": \"readme.md\", \"details\": \"create a new readme file\"}\n"
+        "- \"install SDL2\" -> {\"intent\": \"install\", \"target\": \"SDL2\", \"details\": \"install SDL2 library\"}\n\n"
+        "Respond with ONLY the JSON, no explanation.",
+        user_input
+    );
+
+    return prompt;
+}
+
+/* Parse AI response to extract intent */
+static ParsedCommand* parse_ai_response(const char* response) {
+    if (!response) return NULL;
+
+    ParsedCommand* cmd = calloc(1, sizeof(ParsedCommand));
+    if (!cmd) return NULL;
+
+    cmd->intent = INTENT_UNKNOWN;
+    cmd->confidence = 0.7;  /* AI responses get moderate confidence */
+
+    /* Simple JSON parsing - look for intent field */
+    const char* intent_start = strstr(response, "\"intent\"");
+    if (intent_start) {
+        intent_start = strchr(intent_start, ':');
+        if (intent_start) {
+            intent_start = strchr(intent_start, '"');
+            if (intent_start) {
+                intent_start++;
+                char intent[64] = {0};
+                sscanf(intent_start, "%63[^\"]", intent);
+
+                if (strcmp(intent, "build") == 0) cmd->intent = INTENT_BUILD;
+                else if (strcmp(intent, "init") == 0) cmd->intent = INTENT_INIT;
+                else if (strcmp(intent, "clean") == 0) cmd->intent = INTENT_CLEAN;
+                else if (strcmp(intent, "test") == 0) cmd->intent = INTENT_TEST;
+                else if (strcmp(intent, "create_file") == 0) cmd->intent = INTENT_CREATE_FILE;
+                else if (strcmp(intent, "read_file") == 0) cmd->intent = INTENT_READ_FILE;
+                else if (strcmp(intent, "explain") == 0) cmd->intent = INTENT_EXPLAIN;
+                else if (strcmp(intent, "fix") == 0) cmd->intent = INTENT_FIX;
+                else if (strcmp(intent, "install") == 0) cmd->intent = INTENT_INSTALL;
+                else if (strcmp(intent, "status") == 0) cmd->intent = INTENT_STATUS;
+                else if (strcmp(intent, "help") == 0) cmd->intent = INTENT_HELP;
+
+                cmd->confidence = 0.85;
+            }
+        }
+    }
+
+    /* Extract target */
+    const char* target_start = strstr(response, "\"target\"");
+    if (target_start) {
+        target_start = strchr(target_start, ':');
+        if (target_start) {
+            /* Skip whitespace */
+            target_start++;
+            while (*target_start == ' ' || *target_start == '\t') target_start++;
+
+            if (*target_start == '"') {
+                target_start++;
+                char target[256] = {0};
+                sscanf(target_start, "%255[^\"]", target);
+                if (strlen(target) > 0 && strcmp(target, "null") != 0) {
+                    cmd->target = strdup(target);
+                }
+            }
+        }
+    }
+
+    /* Extract details */
+    const char* details_start = strstr(response, "\"details\"");
+    if (details_start) {
+        details_start = strchr(details_start, ':');
+        if (details_start) {
+            details_start = strchr(details_start, '"');
+            if (details_start) {
+                details_start++;
+                char details[512] = {0};
+                sscanf(details_start, "%511[^\"]", details);
+                if (strlen(details) > 0) {
+                    cmd->details = strdup(details);
+                }
+            }
+        }
+    }
+
+    return cmd;
+}
+
+/* Parse a natural language command using AI */
+ParsedCommand* parse_command_with_ai(const char* input, LLMContext* llm) {
+    if (!input || !llm || !llm_is_ready(llm)) {
+        return parse_command_local(input);
+    }
+
+    log_debug("Parsing command with AI: %s", input);
+
+    /* Generate prompt */
+    char* prompt = prompt_parse_command(input);
+    if (!prompt) {
+        return parse_command_local(input);
+    }
+
+    /* Create request */
+    LLMRequest* request = llm_request_create(prompt);
+    if (!request) {
+        free(prompt);
+        return parse_command_local(input);
+    }
+
+    request->temperature = 0.1f;  /* Low temperature for consistent parsing */
+    request->max_tokens = 256;
+
+    /* Query LLM */
+    LLMResponse* response = llm_query(llm, request);
+
+    ParsedCommand* cmd = NULL;
+    if (response && response->success && response->text) {
+        cmd = parse_ai_response(response->text);
+        if (cmd) {
+            log_debug("AI parsed intent: %d, target: %s",
+                     cmd->intent, cmd->target ? cmd->target : "none");
+        }
+    }
+
+    /* Cleanup */
+    llm_response_free(response);
+    llm_request_free(request);
+    free(prompt);
+
+    /* Fallback to local parsing if AI failed */
+    if (!cmd) {
+        cmd = parse_command_local(input);
+    }
+
+    return cmd;
+}
+
+/* Free a parsed command */
+void parsed_command_free(ParsedCommand* cmd) {
+    if (!cmd) return;
+    free(cmd->target);
+    free(cmd->details);
+    free(cmd);
+}
+
+/* Get intent name as string */
+static const char* intent_to_string(CommandIntent intent) {
+    switch (intent) {
+        case INTENT_BUILD: return "build";
+        case INTENT_INIT: return "init";
+        case INTENT_CLEAN: return "clean";
+        case INTENT_TEST: return "test";
+        case INTENT_CREATE_FILE: return "create_file";
+        case INTENT_READ_FILE: return "read_file";
+        case INTENT_EXPLAIN: return "explain";
+        case INTENT_FIX: return "fix";
+        case INTENT_INSTALL: return "install";
+        case INTENT_STATUS: return "status";
+        case INTENT_HELP: return "help";
+        default: return "unknown";
+    }
+}
+
+/* Execute a natural language command */
+char* execute_natural_command(const char* input,
+                               LLMContext* llm,
+                               const char* project_path) {
+    if (!input) return NULL;
+
+    (void)project_path;  /* Used in future for context */
+
+    /* First try local parsing */
+    ParsedCommand* cmd = parse_command_local(input);
+
+    /* If confidence is low and AI is available, use AI parsing */
+    if (cmd && cmd->confidence < 0.7 && llm && llm_is_ready(llm)) {
+        parsed_command_free(cmd);
+        cmd = parse_command_with_ai(input, llm);
+    }
+
+    if (!cmd) {
+        return strdup("Failed to parse command");
+    }
+
+    char* result = malloc(1024);
+    if (!result) {
+        parsed_command_free(cmd);
+        return NULL;
+    }
+
+    /* Generate result based on intent */
+    snprintf(result, 1024,
+             "Understood: %s%s%s\n"
+             "Intent: %s (confidence: %.0f%%)",
+             cmd->details ? cmd->details : input,
+             cmd->target ? "\nTarget: " : "",
+             cmd->target ? cmd->target : "",
+             intent_to_string(cmd->intent),
+             cmd->confidence * 100);
+
+    parsed_command_free(cmd);
+    return result;
 }

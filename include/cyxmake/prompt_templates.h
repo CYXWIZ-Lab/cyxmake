@@ -13,6 +13,9 @@
 extern "C" {
 #endif
 
+/* Forward declaration */
+typedef struct LLMContext LLMContext;
+
 /**
  * Generate prompt for analyzing a build error
  * @param error_output The error output from the build
@@ -92,6 +95,79 @@ char* prompt_smart_error_analysis(const char* error_output,
  * @return Formatted response (caller must free)
  */
 char* format_llm_response(const char* response);
+
+/* ========================================================================
+ * Natural Language Command Parsing
+ * ======================================================================== */
+
+/**
+ * Intent types for natural language commands
+ */
+typedef enum {
+    INTENT_BUILD,           /* Build the project */
+    INTENT_INIT,            /* Initialize/analyze project */
+    INTENT_CLEAN,           /* Clean build artifacts */
+    INTENT_TEST,            /* Run tests */
+    INTENT_CREATE_FILE,     /* Create a new file */
+    INTENT_READ_FILE,       /* Read/show file contents */
+    INTENT_EXPLAIN,         /* Explain something */
+    INTENT_FIX,             /* Fix an error or issue */
+    INTENT_INSTALL,         /* Install a package/dependency */
+    INTENT_STATUS,          /* Show project/AI status */
+    INTENT_HELP,            /* Get help */
+    INTENT_UNKNOWN          /* Unknown intent - ask AI */
+} CommandIntent;
+
+/**
+ * Parsed natural language command
+ */
+typedef struct {
+    CommandIntent intent;
+    char* target;           /* File, package, or other target */
+    char* details;          /* Additional details from the command */
+    double confidence;      /* Confidence in intent detection (0.0-1.0) */
+} ParsedCommand;
+
+/**
+ * Parse a natural language command locally (fast, no AI)
+ * Uses keyword matching for common patterns
+ * @param input Natural language command string
+ * @return Parsed command (caller must free with parsed_command_free)
+ */
+ParsedCommand* parse_command_local(const char* input);
+
+/**
+ * Parse a natural language command using AI (slower, more accurate)
+ * @param input Natural language command string
+ * @param llm LLM context for AI parsing
+ * @return Parsed command (caller must free with parsed_command_free)
+ */
+ParsedCommand* parse_command_with_ai(const char* input, LLMContext* llm);
+
+/**
+ * Free a parsed command
+ * @param cmd Parsed command to free
+ */
+void parsed_command_free(ParsedCommand* cmd);
+
+/**
+ * Generate prompt for parsing natural language command
+ * @param user_input The natural language command
+ * @return Allocated prompt string (caller must free)
+ */
+char* prompt_parse_command(const char* user_input);
+
+/**
+ * Execute a natural language command
+ * Combines local parsing with AI fallback
+ * @param input Natural language command string
+ * @param llm LLM context (optional, for AI parsing)
+ * @param project_path Project directory
+ * @return Execution result message (caller must free)
+ */
+char* execute_natural_command(const char* input,
+                               LLMContext* llm,
+                               const char* project_path);
 
 #ifdef __cplusplus
 }

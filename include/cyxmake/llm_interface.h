@@ -33,16 +33,29 @@ extern "C" {
 typedef struct LLMContext LLMContext;
 
 /**
+ * GPU backend type
+ */
+typedef enum {
+    LLM_GPU_NONE = 0,    /**< CPU only */
+    LLM_GPU_CUDA,        /**< NVIDIA CUDA */
+    LLM_GPU_VULKAN,      /**< Vulkan (cross-platform) */
+    LLM_GPU_METAL,       /**< Apple Metal */
+    LLM_GPU_OPENCL       /**< OpenCL */
+} LLMGpuBackend;
+
+/**
  * LLM configuration options
  */
 typedef struct {
     const char* model_path;          /**< Path to GGUF model file */
     int n_ctx;                       /**< Context size (default: 8192) */
     int n_threads;                   /**< Number of threads (0 = auto-detect) */
-    int n_gpu_layers;                /**< Number of layers to offload to GPU (0 = CPU only) */
+    int n_gpu_layers;                /**< Number of layers to offload to GPU (-1 = auto, 0 = CPU only) */
     bool use_mmap;                   /**< Use memory-mapped file (default: true) */
     bool use_mlock;                  /**< Lock model in RAM (default: false) */
     bool verbose;                    /**< Enable verbose logging (default: false) */
+    bool gpu_auto;                   /**< Auto-detect and use GPU if available (default: true) */
+    LLMGpuBackend gpu_backend;       /**< Preferred GPU backend (default: auto-detect) */
 } LLMConfig;
 
 /**
@@ -79,6 +92,8 @@ typedef struct {
     size_t model_size_bytes;         /**< Model file size */
     int vocab_size;                  /**< Vocabulary size */
     int context_length;              /**< Maximum context length */
+    int n_gpu_layers;                /**< Number of layers on GPU (0 = CPU only) */
+    LLMGpuBackend gpu_backend;       /**< Active GPU backend */
     bool is_loaded;                  /**< True if model is loaded */
 } LLMModelInfo;
 
@@ -152,6 +167,39 @@ LLMModelInfo* llm_get_model_info(const LLMContext* ctx);
  * @param info Model info to free
  */
 void llm_model_info_free(LLMModelInfo* info);
+
+/* ========================================================================
+ * GPU Detection
+ * ======================================================================== */
+
+/**
+ * Detect available GPU backend
+ *
+ * Checks for available GPU backends in order of preference:
+ * 1. CUDA (NVIDIA)
+ * 2. Metal (Apple)
+ * 3. Vulkan (cross-platform)
+ * 4. OpenCL
+ *
+ * @return Detected GPU backend, or LLM_GPU_NONE if no GPU available
+ */
+LLMGpuBackend llm_detect_gpu(void);
+
+/**
+ * Get GPU backend name as string
+ *
+ * @param backend GPU backend type
+ * @return Static string name (e.g., "CUDA", "Metal", "CPU")
+ */
+const char* llm_gpu_backend_name(LLMGpuBackend backend);
+
+/**
+ * Check if GPU backend is available at runtime
+ *
+ * @param backend GPU backend to check
+ * @return True if backend is available and functional
+ */
+bool llm_gpu_backend_available(LLMGpuBackend backend);
 
 /* ========================================================================
  * Query Interface

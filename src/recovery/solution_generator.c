@@ -37,7 +37,91 @@ static FixAction* create_fix_action(FixActionType type,
     return action;
 }
 
-/* Generate install commands for different platforms */
+/* Common package mappings - error name to platform-specific package names */
+typedef struct {
+    const char* error_name;      /* Name from error message (e.g., "SDL2", "curl") */
+    const char* generic_pkg;     /* Generic/canonical package name */
+    const char* ubuntu_pkg;      /* apt package name */
+    const char* fedora_pkg;      /* dnf/yum package name */
+    const char* arch_pkg;        /* pacman package name */
+    const char* macos_pkg;       /* brew package name */
+    const char* vcpkg_pkg;       /* vcpkg package name */
+    const char* winget_pkg;      /* winget package name */
+} PackageMapping;
+
+static const PackageMapping package_map[] = {
+    /* Threading */
+    {"pthread",  "pthread",        "libpthread-stubs0-dev", "glibc-devel",     "glibc",          NULL,        NULL,        NULL},
+
+    /* Graphics/SDL */
+    {"SDL2",     "sdl2",           "libsdl2-dev",           "SDL2-devel",      "sdl2",           "sdl2",      "sdl2",      NULL},
+    {"SDL",      "sdl",            "libsdl1.2-dev",         "SDL-devel",       "sdl",            "sdl",       "sdl1",      NULL},
+    {"OpenGL",   "opengl",         "libgl1-mesa-dev",       "mesa-libGL-devel","mesa",           NULL,        "opengl",    NULL},
+    {"GLEW",     "glew",           "libglew-dev",           "glew-devel",      "glew",           "glew",      "glew",      NULL},
+    {"GLFW",     "glfw",           "libglfw3-dev",          "glfw-devel",      "glfw",           "glfw",      "glfw3",     NULL},
+    {"vulkan",   "vulkan",         "libvulkan-dev",         "vulkan-devel",    "vulkan-icd-loader","vulkan-loader","vulkan", NULL},
+
+    /* Networking */
+    {"curl",     "curl",           "libcurl4-openssl-dev",  "libcurl-devel",   "curl",           "curl",      "curl",      NULL},
+    {"ssl",      "openssl",        "libssl-dev",            "openssl-devel",   "openssl",        "openssl",   "openssl",   NULL},
+    {"openssl",  "openssl",        "libssl-dev",            "openssl-devel",   "openssl",        "openssl",   "openssl",   NULL},
+
+    /* Compression */
+    {"z",        "zlib",           "zlib1g-dev",            "zlib-devel",      "zlib",           "zlib",      "zlib",      NULL},
+    {"zlib",     "zlib",           "zlib1g-dev",            "zlib-devel",      "zlib",           "zlib",      "zlib",      NULL},
+    {"lz4",      "lz4",            "liblz4-dev",            "lz4-devel",       "lz4",            "lz4",       "lz4",       NULL},
+    {"zstd",     "zstd",           "libzstd-dev",           "libzstd-devel",   "zstd",           "zstd",      "zstd",      NULL},
+
+    /* XML/JSON */
+    {"xml2",     "libxml2",        "libxml2-dev",           "libxml2-devel",   "libxml2",        "libxml2",   "libxml2",   NULL},
+    {"json-c",   "json-c",         "libjson-c-dev",         "json-c-devel",    "json-c",         "json-c",    "json-c",    NULL},
+
+    /* Image */
+    {"png",      "libpng",         "libpng-dev",            "libpng-devel",    "libpng",         "libpng",    "libpng",    NULL},
+    {"jpeg",     "libjpeg",        "libjpeg-dev",           "libjpeg-devel",   "libjpeg-turbo",  "jpeg",      "libjpeg-turbo", NULL},
+    {"tiff",     "libtiff",        "libtiff-dev",           "libtiff-devel",   "libtiff",        "libtiff",   "tiff",      NULL},
+
+    /* Math/Science */
+    {"gmp",      "gmp",            "libgmp-dev",            "gmp-devel",       "gmp",            "gmp",       "gmp",       NULL},
+    {"fftw",     "fftw",           "libfftw3-dev",          "fftw-devel",      "fftw",           "fftw",      "fftw3",     NULL},
+
+    /* Boost */
+    {"boost",    "boost",          "libboost-all-dev",      "boost-devel",     "boost",          "boost",     "boost",     NULL},
+
+    /* Database */
+    {"sqlite3",  "sqlite3",        "libsqlite3-dev",        "sqlite-devel",    "sqlite",         "sqlite3",   "sqlite3",   NULL},
+    {"pq",       "postgresql",     "libpq-dev",             "postgresql-devel","postgresql-libs","libpq",     "libpq",     NULL},
+    {"mysql",    "mysql",          "libmysqlclient-dev",    "mysql-devel",     "mariadb-libs",   "mysql",     "libmysql",  NULL},
+
+    /* Audio */
+    {"openal",   "openal",         "libopenal-dev",         "openal-soft-devel","openal",        "openal-soft","openal-soft",NULL},
+    {"portaudio","portaudio",      "portaudio19-dev",       "portaudio-devel", "portaudio",      "portaudio", "portaudio", NULL},
+
+    /* Misc */
+    {"ncurses",  "ncurses",        "libncurses5-dev",       "ncurses-devel",   "ncurses",        "ncurses",   "ncurses",   NULL},
+    {"readline", "readline",       "libreadline-dev",       "readline-devel",  "readline",       "readline",  "readline",  NULL},
+    {"fmt",      "fmt",            "libfmt-dev",            "fmt-devel",       "fmt",            "fmt",       "fmt",       NULL},
+    {"spdlog",   "spdlog",         "libspdlog-dev",         "spdlog-devel",    "spdlog",         "spdlog",    "spdlog",    NULL},
+
+    /* End marker */
+    {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}
+};
+
+/* Get the canonical package name for a library */
+static const char* get_canonical_package_name(const char* library_name) {
+    if (!library_name) return NULL;
+
+    for (int i = 0; package_map[i].error_name != NULL; i++) {
+        if (strcasecmp(library_name, package_map[i].error_name) == 0) {
+            return package_map[i].generic_pkg;
+        }
+    }
+
+    /* Return original name if not found in mapping */
+    return library_name;
+}
+
+/* Generate install commands for different platforms (legacy fallback) */
 static char* get_install_command(const char* package_name, const ProjectContext* ctx) {
     char buffer[512];
     const char* os = NULL;
@@ -53,54 +137,18 @@ static char* get_install_command(const char* package_name, const ProjectContext*
 #endif
     }
 
-    /* Common package mappings */
-    struct {
-        const char* error_name;
-        const char* ubuntu_pkg;
-        const char* macos_pkg;
-        const char* windows_pkg;
-    } package_map[] = {
-        {"pthread", "libpthread-stubs0-dev", NULL, NULL},
-        {"SDL2", "libsdl2-dev", "sdl2", "SDL2"},
-        {"OpenGL", "libgl1-mesa-dev", NULL, "OpenGL"},
-        {"boost", "libboost-all-dev", "boost", "boost"},
-        {"curl", "libcurl4-openssl-dev", "curl", "curl"},
-        {"ssl", "libssl-dev", "openssl", "openssl"},
-        {"z", "zlib1g-dev", "zlib", "zlib"},
-        {"xml2", "libxml2-dev", "libxml2", "libxml2"},
-        {"png", "libpng-dev", "libpng", "libpng"},
-        {"jpeg", "libjpeg-dev", "jpeg", "libjpeg"},
-        {NULL, NULL, NULL, NULL}
-    };
-
     /* Find package in map */
     const char* mapped_package = package_name;
-    if (strcmp(os, "linux") == 0) {
-        for (int i = 0; package_map[i].error_name; i++) {
-            if (strcasecmp(package_name, package_map[i].error_name) == 0) {
-                if (package_map[i].ubuntu_pkg) {
-                    mapped_package = package_map[i].ubuntu_pkg;
-                }
-                break;
+    for (int i = 0; package_map[i].error_name != NULL; i++) {
+        if (strcasecmp(package_name, package_map[i].error_name) == 0) {
+            if (strcmp(os, "linux") == 0 && package_map[i].ubuntu_pkg) {
+                mapped_package = package_map[i].ubuntu_pkg;
+            } else if (strcmp(os, "macos") == 0 && package_map[i].macos_pkg) {
+                mapped_package = package_map[i].macos_pkg;
+            } else if (strcmp(os, "windows") == 0 && package_map[i].vcpkg_pkg) {
+                mapped_package = package_map[i].vcpkg_pkg;
             }
-        }
-    } else if (strcmp(os, "macos") == 0) {
-        for (int i = 0; package_map[i].error_name; i++) {
-            if (strcasecmp(package_name, package_map[i].error_name) == 0) {
-                if (package_map[i].macos_pkg) {
-                    mapped_package = package_map[i].macos_pkg;
-                }
-                break;
-            }
-        }
-    } else if (strcmp(os, "windows") == 0) {
-        for (int i = 0; package_map[i].error_name; i++) {
-            if (strcasecmp(package_name, package_map[i].error_name) == 0) {
-                if (package_map[i].windows_pkg) {
-                    mapped_package = package_map[i].windows_pkg;
-                }
-                break;
-            }
+            break;
         }
     }
 
@@ -168,7 +216,12 @@ static FixAction** generate_missing_library_fixes(const char* library_name,
 
     int count = 0;
 
+    /* Get canonical package name for tool registry */
+    const char* canonical_pkg = get_canonical_package_name(library_name);
+
     /* Fix 1: Install the package */
+    /* Note: When tool registry is available, it uses 'target' field (canonical name)
+     * When falling back to legacy system(), it uses 'command' field */
     char* install_cmd = get_install_command(library_name, ctx);
     if (install_cmd) {
         char* desc = malloc(256);
@@ -177,8 +230,8 @@ static FixAction** generate_missing_library_fixes(const char* library_name,
             fixes[count++] = create_fix_action(
                 FIX_ACTION_INSTALL_PACKAGE,
                 desc,
-                install_cmd,
-                library_name,
+                install_cmd,        /* Legacy command for fallback */
+                canonical_pkg,      /* Canonical name for tool registry */
                 NULL,
                 true
             );
@@ -245,19 +298,46 @@ static FixAction** generate_missing_header_fixes(const char* header_name,
     /* Determine package name from header */
     char package_name[128];
     if (strstr(header_name, "SDL")) {
-        strcpy(package_name, "SDL2");
+        snprintf(package_name, sizeof(package_name), "SDL2");
     } else if (strstr(header_name, "GL/gl")) {
-        strcpy(package_name, "OpenGL");
+        snprintf(package_name, sizeof(package_name), "OpenGL");
+    } else if (strstr(header_name, "GLEW") || strstr(header_name, "glew")) {
+        snprintf(package_name, sizeof(package_name), "GLEW");
+    } else if (strstr(header_name, "GLFW") || strstr(header_name, "glfw")) {
+        snprintf(package_name, sizeof(package_name), "GLFW");
+    } else if (strstr(header_name, "vulkan")) {
+        snprintf(package_name, sizeof(package_name), "vulkan");
     } else if (strstr(header_name, "boost")) {
-        strcpy(package_name, "boost");
+        snprintf(package_name, sizeof(package_name), "boost");
     } else if (strstr(header_name, "curl")) {
-        strcpy(package_name, "curl");
+        snprintf(package_name, sizeof(package_name), "curl");
+    } else if (strstr(header_name, "openssl") || strstr(header_name, "ssl")) {
+        snprintf(package_name, sizeof(package_name), "openssl");
+    } else if (strstr(header_name, "zlib") || strstr(header_name, "zconf")) {
+        snprintf(package_name, sizeof(package_name), "zlib");
+    } else if (strstr(header_name, "png")) {
+        snprintf(package_name, sizeof(package_name), "png");
+    } else if (strstr(header_name, "jpeg") || strstr(header_name, "jpeglib")) {
+        snprintf(package_name, sizeof(package_name), "jpeg");
+    } else if (strstr(header_name, "sqlite3")) {
+        snprintf(package_name, sizeof(package_name), "sqlite3");
+    } else if (strstr(header_name, "fmt")) {
+        snprintf(package_name, sizeof(package_name), "fmt");
+    } else if (strstr(header_name, "spdlog")) {
+        snprintf(package_name, sizeof(package_name), "spdlog");
     } else {
         /* Extract base name */
-        strncpy(package_name, header_name, sizeof(package_name) - 1);
+        snprintf(package_name, sizeof(package_name), "%s", header_name);
+        char* slash = strrchr(package_name, '/');
+        if (slash) {
+            memmove(package_name, slash + 1, strlen(slash));
+        }
         char* dot = strchr(package_name, '.');
         if (dot) *dot = '\0';
     }
+
+    /* Get canonical package name for tool registry */
+    const char* canonical_pkg = get_canonical_package_name(package_name);
 
     /* Fix 1: Install development package */
     char* install_cmd = get_install_command(package_name, ctx);
@@ -267,8 +347,8 @@ static FixAction** generate_missing_header_fixes(const char* header_name,
         fixes[count++] = create_fix_action(
             FIX_ACTION_INSTALL_PACKAGE,
             desc,
-            install_cmd,
-            package_name,
+            install_cmd,        /* Legacy command */
+            canonical_pkg,      /* Canonical name for tool registry */
             NULL,
             true
         );
@@ -362,7 +442,7 @@ static FixAction** generate_permission_fixes(const char* resource,
     if (resource && strlen(resource) > 0) {
         snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod 755 %s", resource);
     } else {
-        strcpy(chmod_cmd, "chmod -R 755 .");
+        snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod -R 755 .");
     }
 
     fixes[count++] = create_fix_action(
@@ -599,6 +679,7 @@ void fix_actions_free(FixAction** actions, size_t count) {
 
     for (size_t i = 0; i < count; i++) {
         if (actions[i]) {
+            free((void*)actions[i]->description);  /* Cast away const */
             free(actions[i]->command);
             free(actions[i]->target);
             free(actions[i]->value);

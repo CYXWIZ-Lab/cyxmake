@@ -4,6 +4,7 @@
  */
 
 #include "cyxmake/error_recovery.h"
+#include "cyxmake/tool_executor.h"
 #include "cyxmake/logger.h"
 #include <stdlib.h>
 #include <string.h>
@@ -100,8 +101,8 @@ static bool set_environment_var(const char* name, const char* value) {
     return true;
 }
 
-/* Install package using platform-specific package manager */
-static bool install_package(const char* command, const char* package) {
+/* Install package using platform-specific package manager (legacy) */
+static bool install_package_legacy(const char* command, const char* package) {
     if (!command) return false;
 
     log_info("Installing package: %s", package);
@@ -121,6 +122,55 @@ static bool install_package(const char* command, const char* package) {
         log_error("Failed to install package: %s", package);
     }
 
+    return success;
+}
+
+/* Install package using tool registry (smart package manager selection) */
+static bool install_package_with_registry(const char* package,
+                                          const ToolRegistry* registry) {
+    if (!package || !registry) return false;
+
+    log_info("Installing package: %s (using tool registry)", package);
+
+    /* Get the default package manager for this platform */
+    const ToolInfo* pkg_mgr = package_get_default_manager(registry);
+    if (!pkg_mgr) {
+        log_error("No package manager available on this system");
+        return false;
+    }
+
+    log_info("Using package manager: %s", pkg_mgr->display_name);
+
+    /* Create execution options */
+    ToolExecOptions* options = tool_exec_options_create();
+    if (!options) {
+        log_error("Failed to create execution options");
+        return false;
+    }
+    options->capture_output = true;
+    options->show_output = true;
+
+    /* Execute package installation */
+    ToolExecResult* result = package_install(registry, package, options);
+
+    bool success = false;
+    if (result) {
+        if (result->success) {
+            log_success("Package installed: %s", package);
+            success = true;
+        } else {
+            log_error("Failed to install package: %s (exit code: %d)",
+                     package, result->exit_code);
+            if (result->stderr_output && result->stderr_output[0]) {
+                log_error("Error output: %s", result->stderr_output);
+            }
+        }
+        tool_exec_result_free(result);
+    } else {
+        log_error("Package installation failed: no result returned");
+    }
+
+    tool_exec_options_free(options);
     return success;
 }
 
@@ -172,8 +222,10 @@ static bool ask_confirmation(const char* action_desc) {
     return (response[0] == 'y' || response[0] == 'Y');
 }
 
-/* Execute a single fix action */
-bool fix_execute(const FixAction* action, const ProjectContext* ctx) {
+/* Execute a single fix action (internal implementation) */
+static bool fix_execute_internal(const FixAction* action,
+                                  const ProjectContext* ctx,
+                                  const ToolRegistry* registry) {
     if (!action) return false;
 
     log_info("Applying fix: %s", action->description);
@@ -190,7 +242,15 @@ bool fix_execute(const FixAction* action, const ProjectContext* ctx) {
 
     switch (action->type) {
         case FIX_ACTION_INSTALL_PACKAGE:
-            success = install_package(action->command, action->target);
+            /* Use tool registry if available, otherwise fall back to legacy */
+            if (registry && action->target) {
+                success = install_package_with_registry(action->target, registry);
+            } else if (action->command) {
+                success = install_package_legacy(action->command, action->target);
+            } else {
+                log_error("No package name or command specified");
+                success = false;
+            }
             break;
 
         case FIX_ACTION_CREATE_FILE:
@@ -244,8 +304,22 @@ bool fix_execute(const FixAction* action, const ProjectContext* ctx) {
     return success;
 }
 
-/* Execute all fix actions in sequence */
-int fix_execute_all(FixAction** actions, size_t count, const ProjectContext* ctx) {
+/* Execute a single fix action (legacy API without tool registry) */
+bool fix_execute(const FixAction* action, const ProjectContext* ctx) {
+    return fix_execute_internal(action, ctx, NULL);
+}
+
+/* Execute a single fix action with tool registry support */
+bool fix_execute_with_tools(const FixAction* action,
+                            const ProjectContext* ctx,
+                            const ToolRegistry* registry) {
+    return fix_execute_internal(action, ctx, registry);
+}
+
+/* Execute all fix actions in sequence (internal implementation) */
+static int fix_execute_all_internal(FixAction** actions, size_t count,
+                                     const ProjectContext* ctx,
+                                     const ToolRegistry* registry) {
     if (!actions || count == 0) return 0;
 
     log_info("Applying %zu fix action(s)", count);
@@ -262,7 +336,7 @@ int fix_execute_all(FixAction** actions, size_t count, const ProjectContext* ctx
         }
 
         /* Execute the fix */
-        if (fix_execute(actions[i], ctx)) {
+        if (fix_execute_internal(actions[i], ctx, registry)) {
             successful_fixes++;
         } else {
             /* If a critical fix fails, we might want to stop */
@@ -282,4 +356,16 @@ int fix_execute_all(FixAction** actions, size_t count, const ProjectContext* ctx
     }
 
     return successful_fixes;
+}
+
+/* Execute all fix actions in sequence (legacy API) */
+int fix_execute_all(FixAction** actions, size_t count, const ProjectContext* ctx) {
+    return fix_execute_all_internal(actions, count, ctx, NULL);
+}
+
+/* Execute all fix actions with tool registry support */
+int fix_execute_all_with_tools(FixAction** actions, size_t count,
+                                const ProjectContext* ctx,
+                                const ToolRegistry* registry) {
+    return fix_execute_all_internal(actions, count, ctx, registry);
 }

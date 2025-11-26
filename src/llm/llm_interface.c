@@ -40,6 +40,8 @@ struct LLMContext {
     LLMConfig config;                 /* Configuration */
     char last_error[MAX_ERROR_LEN];   /* Last error message */
     bool is_ready;                    /* Ready for inference */
+    int actual_gpu_layers;            /* Actual GPU layers in use */
+    LLMGpuBackend active_backend;     /* Active GPU backend */
 };
 
 /* ========================================================================
@@ -107,13 +109,15 @@ LLMConfig* llm_config_default(void) {
     LLMConfig* config = calloc(1, sizeof(LLMConfig));
     if (!config) return NULL;
 
-    config->model_path = NULL;  /* Must be set by caller */
-    config->n_ctx = 8192;       /* 8K context */
-    config->n_threads = 0;      /* Auto-detect */
-    config->n_gpu_layers = 0;   /* CPU only by default */
-    config->use_mmap = true;    /* Memory mapping */
-    config->use_mlock = false;  /* Don't lock in RAM */
-    config->verbose = false;    /* Quiet by default */
+    config->model_path = NULL;      /* Must be set by caller */
+    config->n_ctx = 8192;           /* 8K context */
+    config->n_threads = 0;          /* Auto-detect */
+    config->n_gpu_layers = -1;      /* Auto-detect: use all GPU layers */
+    config->use_mmap = true;        /* Memory mapping */
+    config->use_mlock = false;      /* Don't lock in RAM */
+    config->verbose = false;        /* Quiet by default */
+    config->gpu_auto = true;        /* Try GPU first, fallback to CPU */
+    config->gpu_backend = LLM_GPU_NONE;  /* Auto-detect backend */
 
     return config;
 }
@@ -159,12 +163,44 @@ LLMContext* llm_init(const LLMConfig* config) {
     /* Initialize llama.cpp backend */
     llama_backend_init();
 
+    /* Detect GPU backend if auto mode enabled */
+    LLMGpuBackend detected_backend = LLM_GPU_NONE;
+    if (config->gpu_auto || config->n_gpu_layers != 0) {
+        detected_backend = llm_detect_gpu();
+        if (detected_backend != LLM_GPU_NONE) {
+            log_info("GPU backend detected: %s", llm_gpu_backend_name(detected_backend));
+        }
+    }
+
+    /* Determine GPU layers to use */
+    int gpu_layers = 0;
+    if (config->n_gpu_layers == -1) {
+        /* Auto mode: use all layers on GPU if available */
+        gpu_layers = (detected_backend != LLM_GPU_NONE) ? 999 : 0;
+    } else if (config->n_gpu_layers > 0) {
+        /* Explicit layer count */
+        gpu_layers = config->n_gpu_layers;
+    }
+    /* else: n_gpu_layers == 0 means CPU only */
+
     /* Set up model parameters */
     struct llama_model_params model_params = llama_model_default_params();
-    model_params.n_gpu_layers = config->n_gpu_layers;
+    model_params.n_gpu_layers = gpu_layers;
 
-    /* Load model */
+    log_info("Attempting to load with %d GPU layers...", gpu_layers);
+
+    /* Load model - try with GPU first */
     llm_ctx->model = llama_load_model_from_file(model_path, model_params);
+
+    /* If GPU loading fails and we were using GPU, fallback to CPU */
+    if (!llm_ctx->model && gpu_layers > 0 && config->gpu_auto) {
+        log_warning("GPU loading failed, falling back to CPU...");
+        model_params.n_gpu_layers = 0;
+        gpu_layers = 0;
+        detected_backend = LLM_GPU_NONE;
+        llm_ctx->model = llama_load_model_from_file(model_path, model_params);
+    }
+
     free(model_path);
 
     if (!llm_ctx->model) {
@@ -172,6 +208,10 @@ LLMContext* llm_init(const LLMConfig* config) {
         llm_shutdown(llm_ctx);
         return NULL;
     }
+
+    /* Store actual GPU configuration */
+    llm_ctx->actual_gpu_layers = gpu_layers;
+    llm_ctx->active_backend = detected_backend;
 
     /* Set up context parameters */
     struct llama_context_params ctx_params = llama_context_default_params();
@@ -207,6 +247,13 @@ LLMContext* llm_init(const LLMConfig* config) {
     log_info("Vocabulary size: %d", n_vocab);
     log_info("Context length: %d", n_ctx_train);
     log_info("Using %d threads", ctx_params.n_threads);
+    if (llm_ctx->actual_gpu_layers > 0) {
+        log_info("GPU acceleration: %s (%d layers)",
+                 llm_gpu_backend_name(llm_ctx->active_backend),
+                 llm_ctx->actual_gpu_layers);
+    } else {
+        log_info("Running on CPU only");
+    }
 
     return llm_ctx;
 }
@@ -252,6 +299,8 @@ LLMModelInfo* llm_get_model_info(const LLMContext* ctx) {
     const struct llama_vocab * vocab = llama_model_get_vocab(ctx->model);
     info->vocab_size = llama_vocab_n_tokens(vocab);
     info->context_length = llama_model_n_ctx_train(ctx->model);
+    info->n_gpu_layers = ctx->actual_gpu_layers;
+    info->gpu_backend = ctx->active_backend;
     info->is_loaded = true;
 
     /* Try to get file size */
@@ -553,6 +602,64 @@ int llm_estimate_tokens(const char* text) {
 
     /* Rough estimation: 1 token ≈ 4 characters */
     return (int)(strlen(text) / 4);
+}
+
+/* ========================================================================
+ * GPU Detection
+ * ======================================================================== */
+
+LLMGpuBackend llm_detect_gpu(void) {
+    /*
+     * GPU detection based on compile-time flags.
+     * At runtime, we check if the backend was compiled in.
+     * llama.cpp handles the actual GPU initialization.
+     */
+
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_CUBLAS)
+    log_debug("CUDA support compiled in");
+    return LLM_GPU_CUDA;
+#endif
+
+#if defined(GGML_USE_METAL)
+    log_debug("Metal support compiled in");
+    return LLM_GPU_METAL;
+#endif
+
+#if defined(GGML_USE_VULKAN)
+    log_debug("Vulkan support compiled in");
+    return LLM_GPU_VULKAN;
+#endif
+
+#if defined(GGML_USE_OPENCL)
+    log_debug("OpenCL support compiled in");
+    return LLM_GPU_OPENCL;
+#endif
+
+    log_debug("No GPU support compiled in, using CPU");
+    return LLM_GPU_NONE;
+}
+
+const char* llm_gpu_backend_name(LLMGpuBackend backend) {
+    switch (backend) {
+        case LLM_GPU_CUDA:   return "CUDA";
+        case LLM_GPU_VULKAN: return "Vulkan";
+        case LLM_GPU_METAL:  return "Metal";
+        case LLM_GPU_OPENCL: return "OpenCL";
+        case LLM_GPU_NONE:
+        default:             return "CPU";
+    }
+}
+
+bool llm_gpu_backend_available(LLMGpuBackend backend) {
+    LLMGpuBackend detected = llm_detect_gpu();
+
+    /* If checking for CPU, it's always available */
+    if (backend == LLM_GPU_NONE) {
+        return true;
+    }
+
+    /* Check if the requested backend matches what was compiled */
+    return detected == backend;
 }
 
 /* ========================================================================
