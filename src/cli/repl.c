@@ -66,6 +66,39 @@
 /* Maximum input line length */
 #define MAX_INPUT_LENGTH 4096
 
+/**
+ * Strip non-ASCII characters from a string (in-place)
+ * Replaces multi-byte UTF-8 sequences with spaces or removes them
+ */
+static void strip_non_ascii(char* str) {
+    if (!str) return;
+
+    char* src = str;
+    char* dst = str;
+
+    while (*src) {
+        unsigned char c = (unsigned char)*src;
+
+        if (c < 0x80) {
+            /* ASCII character - keep it */
+            *dst++ = *src++;
+        } else if (c >= 0xC0 && c < 0xE0) {
+            /* 2-byte UTF-8 sequence - skip */
+            src += 2;
+        } else if (c >= 0xE0 && c < 0xF0) {
+            /* 3-byte UTF-8 sequence (includes most emojis) - skip */
+            src += 3;
+        } else if (c >= 0xF0) {
+            /* 4-byte UTF-8 sequence (includes complex emojis) - skip */
+            src += 4;
+        } else {
+            /* Continuation byte or invalid - skip one byte */
+            src++;
+        }
+    }
+    *dst = '\0';
+}
+
 /* Default configuration */
 ReplConfig repl_config_default(void) {
     return (ReplConfig){
@@ -532,6 +565,9 @@ static bool execute_ai_agent_response(ReplSession* session, AIAgentResponse* res
 
     /* Display AI message */
     if (response->message) {
+        /* Strip non-ASCII characters for Windows console compatibility */
+        strip_non_ascii(response->message);
+
         if (session->config.colors_enabled) {
             printf("\n%s%sAI:%s %s\n\n", COLOR_BOLD, COLOR_MAGENTA, COLOR_RESET, response->message);
         } else {
@@ -1056,6 +1092,7 @@ static bool execute_natural_language(ReplSession* session, const char* input) {
                                 ai_agent_response_free(agent_response);
                             } else {
                                 /* Couldn't parse response, show raw */
+                                strip_non_ascii(ai_response);
                                 printf("\n%s\n", ai_response);
                             }
                             free(ai_response);
