@@ -15,10 +15,11 @@
 5. [Using the REPL](#using-the-repl)
 6. [Natural Language Commands](#natural-language-commands)
 7. [AI Agent System](#ai-agent-system)
-8. [Tool Discovery & Execution](#tool-discovery--execution)
-9. [Error Recovery System](#error-recovery-system)
-10. [Configuration](#configuration)
-11. [For Developers](#for-developers)
+8. [Multi-Provider AI System](#multi-provider-ai-system)
+9. [Tool Discovery & Execution](#tool-discovery--execution)
+10. [Error Recovery System](#error-recovery-system)
+11. [Configuration](#configuration)
+12. [For Developers](#for-developers)
 
 ---
 
@@ -48,6 +49,7 @@ cyxmake> clean up and rebuild
 | Tool Execution | ✅ Complete | Runs discovered tools safely |
 | Error Recovery | ✅ Complete | Diagnoses and suggests fixes for build errors |
 | AI Agent System | ✅ Complete | LLM-powered action execution |
+| Multi-Provider AI | ✅ Complete | OpenAI, Gemini, Anthropic, Ollama, etc. |
 | LLM Integration | 🔄 Partial | llama.cpp interface ready, needs model |
 
 ### What CyxMake Can Do Now
@@ -479,6 +481,250 @@ Building project in build...
 | 3B params (Q4) | ~2GB | Good for simple tasks |
 | 7B params (Q4) | ~4GB | Recommended |
 | 13B params (Q4) | ~8GB | Best quality |
+
+---
+
+## Multi-Provider AI System
+
+CyxMake supports multiple AI providers, allowing you to use cloud-hosted models (OpenAI, Gemini, Anthropic, etc.) or local models interchangeably.
+
+### Supported Providers
+
+| Provider | Type | API Key Required | Description |
+|----------|------|------------------|-------------|
+| **OpenAI** | Cloud | Yes | GPT-4o, GPT-4o-mini, GPT-3.5-turbo |
+| **Anthropic** | Cloud | Yes | Claude 3.5 Sonnet, Claude 3 Opus/Haiku |
+| **Google Gemini** | Cloud | Yes | Gemini 1.5 Pro, Gemini 1.5 Flash |
+| **Ollama** | Local | No | Local models via Ollama server |
+| **xAI Grok** | Cloud | Yes | Grok models (OpenAI-compatible) |
+| **OpenRouter** | Cloud | Yes | Access to 100+ models via one API |
+| **Groq** | Cloud | Yes | Fast inference for Llama models |
+| **Together AI** | Cloud | Yes | Open-source models hosted |
+| **llama.cpp** | Local | No | Direct GGUF model loading |
+| **Custom** | Any | Optional | Any OpenAI-compatible server |
+
+### Quick Setup
+
+**1. Copy the example configuration:**
+```bash
+cp cyxmake.example.toml cyxmake.toml
+```
+
+**2. Configure your providers in `cyxmake.toml`:**
+```toml
+[ai]
+default_provider = "ollama"    # Provider to use by default
+fallback_provider = "openai"   # Backup if default fails
+timeout = 60                   # Request timeout (seconds)
+max_tokens = 1024              # Max response tokens
+temperature = 0.7              # Generation temperature
+
+# Ollama (Local) - No API key needed!
+[ai.providers.ollama]
+enabled = true
+type = "ollama"
+base_url = "http://localhost:11434"
+model = "llama2"
+
+# OpenAI
+[ai.providers.openai]
+enabled = true
+type = "openai"
+api_key = "${OPENAI_API_KEY}"  # Uses environment variable
+base_url = "https://api.openai.com/v1"
+model = "gpt-4o-mini"
+
+# Google Gemini
+[ai.providers.gemini]
+enabled = false
+type = "gemini"
+api_key = "${GEMINI_API_KEY}"
+base_url = "https://generativelanguage.googleapis.com/v1beta"
+model = "gemini-1.5-flash"
+
+# Anthropic Claude
+[ai.providers.anthropic]
+enabled = false
+type = "anthropic"
+api_key = "${ANTHROPIC_API_KEY}"
+base_url = "https://api.anthropic.com/v1"
+model = "claude-3-haiku-20240307"
+```
+
+**3. Set environment variables for API keys:**
+```bash
+# Linux/macOS
+export OPENAI_API_KEY="sk-..."
+export ANTHROPIC_API_KEY="sk-ant-..."
+export GEMINI_API_KEY="..."
+
+# Windows (PowerShell)
+$env:OPENAI_API_KEY = "sk-..."
+
+# Windows (CMD)
+set OPENAI_API_KEY=sk-...
+```
+
+### Using AI Providers
+
+**Check AI Status:**
+```
+cyxmake> /ai
+
+AI Status
+
+Cloud Provider: ollama (ollama)
+  Model: llama2
+  Status: ready
+
+Configured providers: 2
+
+Commands:
+  /ai providers     - List available providers
+  /ai use <name>    - Switch to a provider
+  /ai test          - Test current AI
+  /ai load [path]   - Load local GGUF model
+  /ai unload        - Unload AI
+```
+
+**List Available Providers:**
+```
+cyxmake> /ai providers
+
+AI Providers
+
+  * ollama (ollama) - ready
+      Model: llama2
+    openai (openai) - ready
+      Model: gpt-4o-mini
+```
+
+**Switch Providers at Runtime:**
+```
+cyxmake> /ai use openai
+[OK] Switched to provider: openai
+  Model: gpt-4o-mini
+
+cyxmake> /ai use ollama
+[OK] Switched to provider: ollama
+  Model: llama2
+```
+
+**Test Current Provider:**
+```
+cyxmake> /ai test
+Testing AI...
+[OK] AI response: Hello! AI is working.
+```
+
+### Provider-Specific Configuration
+
+**OpenRouter (Access 100+ Models):**
+```toml
+[ai.providers.openrouter]
+enabled = true
+type = "openai"  # Uses OpenAI-compatible API
+api_key = "${OPENROUTER_API_KEY}"
+base_url = "https://openrouter.ai/api/v1"
+model = "anthropic/claude-3.5-sonnet"
+
+# Optional headers for rankings
+[ai.providers.openrouter.headers]
+"HTTP-Referer" = "https://cyxmake.dev"
+"X-Title" = "CyxMake"
+```
+
+**Groq (Fast Llama Inference):**
+```toml
+[ai.providers.groq]
+enabled = true
+type = "openai"
+api_key = "${GROQ_API_KEY}"
+base_url = "https://api.groq.com/openai/v1"
+model = "llama-3.1-70b-versatile"
+```
+
+**Local llama.cpp (Direct GGUF):**
+```toml
+[ai.providers.local]
+enabled = true
+type = "llamacpp"
+model_path = "/path/to/model.gguf"
+context_size = 4096
+gpu_layers = 0    # 0 = CPU only, set higher for GPU
+threads = 4
+```
+
+**Custom OpenAI-Compatible Server (LM Studio, vLLM, text-generation-webui):**
+```toml
+[ai.providers.custom]
+enabled = true
+type = "custom"
+api_key = "not-needed"  # Most local servers don't need this
+base_url = "http://localhost:1234/v1"  # IMPORTANT: Must include /v1
+model = "local-model"
+```
+
+**LM Studio Example:**
+```toml
+[ai.providers.lmstudio]
+name = "lmstudio"
+enabled = true
+type = "custom"
+api_key = "not-needed"
+base_url = "http://192.168.1.116:1234/v1"  # Your LM Studio server IP
+model = "openai/gpt-oss-20b"               # Model loaded in LM Studio
+```
+
+> **Important: The `/v1` suffix is required!**
+>
+> CyxMake appends `/chat/completions` to the base URL when making requests.
+> - Without `/v1`: `http://localhost:1234/chat/completions` ❌ (404 error)
+> - With `/v1`: `http://localhost:1234/v1/chat/completions` ✅ (correct)
+>
+> Most OpenAI-compatible servers (LM Studio, vLLM, Ollama's OpenAI mode) expect
+> the full path `/v1/chat/completions`, so always include `/v1` in your base_url.
+
+### Hybrid Usage (Cloud + Local)
+
+CyxMake can use both cloud providers and local models:
+
+```
+# Use cloud provider
+cyxmake> /ai use openai
+cyxmake> explain this complex error in detail
+
+# Switch to local for privacy-sensitive work
+cyxmake> /ai use ollama
+cyxmake> analyze my source code
+
+# Load a local GGUF model directly
+cyxmake> /ai load ~/.cyxmake/models/codellama-7b-q4.gguf
+```
+
+### Prerequisites for HTTP Providers
+
+Cloud providers require **libcurl** for HTTP requests. If curl is not available:
+
+```bash
+# Ubuntu/Debian
+sudo apt install libcurl4-openssl-dev
+
+# macOS (usually pre-installed)
+brew install curl
+
+# Windows (vcpkg)
+vcpkg install curl:x64-windows
+```
+
+Then rebuild CyxMake:
+```bash
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake --build .
+```
+
+Without curl, only the local llama.cpp provider will work.
 
 ---
 

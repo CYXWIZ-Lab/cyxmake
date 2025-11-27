@@ -17,6 +17,8 @@ typedef struct Orchestrator Orchestrator;
 typedef struct LLMContext LLMContext;
 typedef struct PermissionContext PermissionContext;
 typedef struct ConversationContext ConversationContext;
+typedef struct AIProviderRegistry AIProviderRegistry;
+typedef struct AIProvider AIProvider;
 
 /**
  * REPL configuration
@@ -38,6 +40,8 @@ typedef struct ReplSession {
     LLMContext* llm;
     PermissionContext* permissions;      /* Permission system */
     ConversationContext* conversation;   /* Conversation context */
+    AIProviderRegistry* ai_registry;     /* Multi-provider AI registry */
+    AIProvider* current_provider;        /* Currently active AI provider */
 
     /* Session state */
     bool running;

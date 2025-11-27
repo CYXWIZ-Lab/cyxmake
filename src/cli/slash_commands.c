@@ -10,6 +10,7 @@
 #include "cyxmake/file_ops.h"
 #include "cyxmake/conversation_context.h"
 #include "cyxmake/llm_interface.h"
+#include "cyxmake/ai_provider.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -666,30 +667,190 @@ bool cmd_context(ReplSession* session, const char* args) {
 bool cmd_ai(ReplSession* session, const char* args) {
     if (args && strlen(args) > 0) {
         /* Handle subcommands */
-        if (strncmp(args, "load", 4) == 0) {
-            /* /ai load [path] - load a model */
+        if (strncmp(args, "providers", 9) == 0 || strncmp(args, "list", 4) == 0) {
+            /* /ai providers - list available providers */
+            if (session->config.colors_enabled) {
+                printf("\n%s%sAI Providers%s\n\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
+            } else {
+                printf("\nAI Providers\n\n");
+            }
+
+            if (!session->ai_registry || ai_registry_count(session->ai_registry) == 0) {
+                if (session->config.colors_enabled) {
+                    printf("%sNo providers configured%s\n", COLOR_DIM, COLOR_RESET);
+                    printf("\n%sTo configure providers:%s\n", COLOR_YELLOW, COLOR_RESET);
+                    printf("  1. Copy %scyxmake.example.toml%s to %scyxmake.toml%s\n",
+                           COLOR_CYAN, COLOR_RESET, COLOR_CYAN, COLOR_RESET);
+                    printf("  2. Configure your API keys and provider settings\n");
+                    printf("  3. Restart CyxMake\n\n");
+                } else {
+                    printf("No providers configured\n\n");
+                    printf("To configure providers:\n");
+                    printf("  1. Copy cyxmake.example.toml to cyxmake.toml\n");
+                    printf("  2. Configure your API keys and provider settings\n");
+                    printf("  3. Restart CyxMake\n\n");
+                }
+            } else {
+                const char* names[16];
+                int count = ai_registry_list(session->ai_registry, names, 16);
+
+                for (int i = 0; i < count; i++) {
+                    AIProvider* prov = ai_registry_get(session->ai_registry, names[i]);
+                    if (!prov) continue;
+
+                    bool is_current = (prov == session->current_provider);
+                    const char* status = ai_provider_status_to_string(ai_provider_status(prov));
+                    const char* type = ai_provider_type_to_string(prov->config.type);
+
+                    if (session->config.colors_enabled) {
+                        printf("  %s%s%s %s%s%s (%s) - %s%s%s\n",
+                               is_current ? COLOR_GREEN : "",
+                               is_current ? "*" : " ",
+                               COLOR_RESET,
+                               COLOR_CYAN, names[i], COLOR_RESET,
+                               type,
+                               status[0] == 'r' ? COLOR_GREEN : COLOR_YELLOW,
+                               status, COLOR_RESET);
+                        if (prov->config.model) {
+                            printf("      Model: %s%s%s\n", COLOR_DIM, prov->config.model, COLOR_RESET);
+                        }
+                    } else {
+                        printf("  %s %s (%s) - %s\n",
+                               is_current ? "*" : " ",
+                               names[i], type, status);
+                        if (prov->config.model) {
+                            printf("      Model: %s\n", prov->config.model);
+                        }
+                    }
+                }
+                printf("\n");
+            }
+            return true;
+        }
+        else if (strncmp(args, "use ", 4) == 0 || strncmp(args, "switch ", 7) == 0) {
+            /* /ai use <provider> - switch to a provider */
+            const char* provider_name = args + (args[0] == 'u' ? 4 : 7);
+            while (*provider_name == ' ' || *provider_name == '\t') provider_name++;
+
+            if (!session->ai_registry) {
+                printf("No AI providers configured.\n");
+                return true;
+            }
+
+            AIProvider* provider = ai_registry_get(session->ai_registry, provider_name);
+            if (!provider) {
+                if (session->config.colors_enabled) {
+                    printf("%s%s Provider not found: %s%s\n",
+                           COLOR_RED, SYM_CROSS, provider_name, COLOR_RESET);
+                    printf("%sUse '/ai providers' to list available providers%s\n",
+                           COLOR_DIM, COLOR_RESET);
+                } else {
+                    printf("Provider not found: %s\n", provider_name);
+                    printf("Use '/ai providers' to list available providers\n");
+                }
+                return true;
+            }
+
+            /* Initialize if not ready */
+            if (!ai_provider_is_ready(provider)) {
+                if (!ai_provider_init(provider)) {
+                    if (session->config.colors_enabled) {
+                        printf("%s%s Failed to initialize provider: %s%s\n",
+                               COLOR_RED, SYM_CROSS, provider_name, COLOR_RESET);
+                        const char* err = ai_provider_error(provider);
+                        if (err) printf("  %s%s%s\n", COLOR_DIM, err, COLOR_RESET);
+                    } else {
+                        printf("Failed to initialize provider: %s\n", provider_name);
+                        const char* err = ai_provider_error(provider);
+                        if (err) printf("  %s\n", err);
+                    }
+                    return true;
+                }
+            }
+
+            session->current_provider = provider;
+
+            if (session->config.colors_enabled) {
+                printf("%s%s Switched to provider: %s%s%s\n",
+                       COLOR_GREEN, SYM_CHECK, COLOR_CYAN, provider_name, COLOR_RESET);
+                if (provider->config.model) {
+                    printf("  Model: %s%s%s\n", COLOR_DIM, provider->config.model, COLOR_RESET);
+                }
+            } else {
+                printf("Switched to provider: %s\n", provider_name);
+                if (provider->config.model) {
+                    printf("  Model: %s\n", provider->config.model);
+                }
+            }
+            return true;
+        }
+        else if (strncmp(args, "test", 4) == 0) {
+            /* /ai test - test current provider */
+            if (!session->current_provider) {
+                if (!session->llm || !llm_is_ready(session->llm)) {
+                    printf("No AI provider active. Use '/ai use <provider>' or '/ai load <model>'.\n");
+                    return true;
+                }
+            }
+
+            if (session->config.colors_enabled) {
+                printf("%sTesting AI...%s\n", COLOR_DIM, COLOR_RESET);
+            }
+
+            char* response = NULL;
+
+            /* Try cloud provider first */
+            if (session->current_provider && ai_provider_is_ready(session->current_provider)) {
+                response = ai_provider_query(session->current_provider,
+                    "Say 'Hello! AI is working.' in one short sentence.", 50);
+            }
+            /* Fall back to local LLM */
+            else if (session->llm && llm_is_ready(session->llm)) {
+                response = llm_query_simple(session->llm,
+                    "Say 'Hello! AI is working.' in one short sentence.", 50);
+            }
+
+            if (response) {
+                if (session->config.colors_enabled) {
+                    printf("%s%s AI response:%s %s\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET, response);
+                } else {
+                    printf("AI response: %s\n", response);
+                }
+                free(response);
+            } else {
+                if (session->config.colors_enabled) {
+                    printf("%s%s AI test failed%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+                    if (session->current_provider) {
+                        const char* err = ai_provider_error(session->current_provider);
+                        if (err) printf("  %s%s%s\n", COLOR_DIM, err, COLOR_RESET);
+                    }
+                } else {
+                    printf("AI test failed.\n");
+                }
+            }
+            return true;
+        }
+        else if (strncmp(args, "load", 4) == 0) {
+            /* /ai load [path] - load a local model */
             const char* path = args + 4;
             while (*path == ' ' || *path == '\t') path++;
 
             if (*path == '\0') {
-                /* Use default path */
                 path = NULL;
             }
 
             if (session->config.colors_enabled) {
-                printf("%sLoading AI model...%s\n", COLOR_DIM, COLOR_RESET);
+                printf("%sLoading local AI model...%s\n", COLOR_DIM, COLOR_RESET);
             } else {
-                printf("Loading AI model...\n");
+                printf("Loading local AI model...\n");
             }
 
-            /* Get model path */
             char* model_path = path ? strdup(path) : llm_get_default_model_path();
             if (!model_path) {
                 printf("Could not determine model path.\n");
                 return true;
             }
 
-            /* Check if model exists */
             if (!llm_validate_model_file(model_path)) {
                 if (session->config.colors_enabled) {
                     printf("%s%s Model file not found or invalid: %s%s\n",
@@ -699,6 +860,7 @@ bool cmd_ai(ReplSession* session, const char* args) {
                     printf("  # Download Qwen2.5-Coder-3B (recommended):\n");
                     printf("  wget https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/qwen2.5-coder-3b-instruct-q4_k_m.gguf\n");
                     printf("  mv qwen2.5-coder-3b-instruct-q4_k_m.gguf ~/.cyxmake/models/\n");
+                    printf("\n%sOr configure cloud providers in cyxmake.toml%s\n", COLOR_DIM, COLOR_RESET);
                 } else {
                     printf("Model file not found: %s\n", model_path);
                 }
@@ -706,13 +868,11 @@ bool cmd_ai(ReplSession* session, const char* args) {
                 return true;
             }
 
-            /* Shutdown existing LLM if any */
             if (session->llm) {
                 llm_shutdown(session->llm);
                 session->llm = NULL;
             }
 
-            /* Create config and load */
             LLMConfig* config = llm_config_default();
             config->model_path = model_path;
             config->verbose = session->config.verbose;
@@ -721,13 +881,15 @@ bool cmd_ai(ReplSession* session, const char* args) {
             llm_config_free(config);
 
             if (session->llm) {
+                /* Clear cloud provider when using local */
+                session->current_provider = NULL;
+
                 if (session->config.colors_enabled) {
-                    printf("%s%s AI model loaded successfully!%s\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET);
+                    printf("%s%s Local AI model loaded!%s\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET);
                 } else {
-                    printf("AI model loaded successfully!\n");
+                    printf("Local AI model loaded!\n");
                 }
 
-                /* Show model info */
                 LLMModelInfo* info = llm_get_model_info(session->llm);
                 if (info) {
                     printf("  Model: %s\n", info->model_name);
@@ -752,40 +914,13 @@ bool cmd_ai(ReplSession* session, const char* args) {
             return true;
         }
         else if (strncmp(args, "unload", 6) == 0) {
-            /* /ai unload - unload the model */
+            /* /ai unload - unload all AI */
             if (session->llm) {
                 llm_shutdown(session->llm);
                 session->llm = NULL;
-                printf("AI model unloaded.\n");
-            } else {
-                printf("No AI model loaded.\n");
             }
-            return true;
-        }
-        else if (strncmp(args, "test", 4) == 0) {
-            /* /ai test - test with a simple query */
-            if (!session->llm || !llm_is_ready(session->llm)) {
-                printf("AI not loaded. Use /ai load first.\n");
-                return true;
-            }
-
-            if (session->config.colors_enabled) {
-                printf("%sTesting AI...%s\n", COLOR_DIM, COLOR_RESET);
-            }
-
-            char* response = llm_query_simple(session->llm,
-                "Say 'Hello! AI is working.' in one short sentence.", 50);
-
-            if (response) {
-                if (session->config.colors_enabled) {
-                    printf("%s%s AI response:%s %s\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET, response);
-                } else {
-                    printf("AI response: %s\n", response);
-                }
-                free(response);
-            } else {
-                printf("AI test failed.\n");
-            }
+            session->current_provider = NULL;
+            printf("AI unloaded.\n");
             return true;
         }
     }
@@ -794,16 +929,30 @@ bool cmd_ai(ReplSession* session, const char* args) {
     if (session->config.colors_enabled) {
         printf("\n%s%sAI Status%s\n\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
 
-        if (session->llm && llm_is_ready(session->llm)) {
-            printf("%sStatus:%s %s%sLoaded%s\n", COLOR_YELLOW, COLOR_RESET,
-                   COLOR_GREEN, COLOR_BOLD, COLOR_RESET);
+        /* Show cloud provider status */
+        if (session->current_provider) {
+            const char* name = session->current_provider->config.name;
+            const char* type = ai_provider_type_to_string(session->current_provider->config.type);
+            const char* model = session->current_provider->config.model;
+            const char* status = ai_provider_status_to_string(
+                ai_provider_status(session->current_provider));
+
+            printf("%sCloud Provider:%s %s%s%s (%s)\n", COLOR_YELLOW, COLOR_RESET,
+                   COLOR_GREEN, name, COLOR_RESET, type);
+            printf("  Model: %s\n", model ? model : "(default)");
+            printf("  Status: %s%s%s\n",
+                   status[0] == 'r' ? COLOR_GREEN : COLOR_YELLOW, status, COLOR_RESET);
+        }
+        /* Show local LLM status */
+        else if (session->llm && llm_is_ready(session->llm)) {
+            printf("%sLocal LLM:%s %sLoaded%s\n", COLOR_YELLOW, COLOR_RESET,
+                   COLOR_GREEN, COLOR_RESET);
 
             LLMModelInfo* info = llm_get_model_info(session->llm);
             if (info) {
-                printf("%sModel:%s %s\n", COLOR_YELLOW, COLOR_RESET, info->model_name);
-                printf("%sContext:%s %d tokens\n", COLOR_YELLOW, COLOR_RESET, info->context_length);
-                printf("%sBackend:%s %s", COLOR_YELLOW, COLOR_RESET,
-                       llm_gpu_backend_name(info->gpu_backend));
+                printf("  Model: %s\n", info->model_name);
+                printf("  Context: %d tokens\n", info->context_length);
+                printf("  Backend: %s", llm_gpu_backend_name(info->gpu_backend));
                 if (info->n_gpu_layers > 0) {
                     printf(" (%d GPU layers)", info->n_gpu_layers);
                 }
@@ -811,46 +960,62 @@ bool cmd_ai(ReplSession* session, const char* args) {
                 llm_model_info_free(info);
             }
         } else {
-            printf("%sStatus:%s %s%sNot loaded%s\n", COLOR_YELLOW, COLOR_RESET,
-                   COLOR_RED, COLOR_BOLD, COLOR_RESET);
+            printf("%sStatus:%s %sNo AI active%s\n", COLOR_YELLOW, COLOR_RESET,
+                   COLOR_RED, COLOR_RESET);
+        }
 
-            char* default_path = llm_get_default_model_path();
-            printf("\n%sDefault model path:%s\n  %s\n", COLOR_YELLOW, COLOR_RESET, default_path);
-            free(default_path);
+        /* Show configured providers count */
+        if (session->ai_registry) {
+            int count = ai_registry_count(session->ai_registry);
+            if (count > 0) {
+                printf("\n%sConfigured providers:%s %d\n", COLOR_YELLOW, COLOR_RESET, count);
+            }
         }
 
         printf("\n%sCommands:%s\n", COLOR_YELLOW, COLOR_RESET);
-        printf("  %s/ai load [path]%s  - Load AI model\n", COLOR_CYAN, COLOR_RESET);
-        printf("  %s/ai unload%s       - Unload AI model\n", COLOR_CYAN, COLOR_RESET);
-        printf("  %s/ai test%s         - Test AI with simple query\n", COLOR_CYAN, COLOR_RESET);
+        printf("  %s/ai providers%s     - List available providers\n", COLOR_CYAN, COLOR_RESET);
+        printf("  %s/ai use <name>%s    - Switch to a provider\n", COLOR_CYAN, COLOR_RESET);
+        printf("  %s/ai test%s          - Test current AI\n", COLOR_CYAN, COLOR_RESET);
+        printf("  %s/ai load [path]%s   - Load local GGUF model\n", COLOR_CYAN, COLOR_RESET);
+        printf("  %s/ai unload%s        - Unload AI\n", COLOR_CYAN, COLOR_RESET);
+        printf("\n%sConfiguration:%s cyxmake.toml\n", COLOR_YELLOW, COLOR_RESET);
         printf("\n");
     } else {
         printf("\nAI Status\n\n");
 
-        if (session->llm && llm_is_ready(session->llm)) {
-            printf("Status: Loaded\n");
+        if (session->current_provider) {
+            const char* name = session->current_provider->config.name;
+            const char* type = ai_provider_type_to_string(session->current_provider->config.type);
+            const char* model = session->current_provider->config.model;
+
+            printf("Cloud Provider: %s (%s)\n", name, type);
+            printf("  Model: %s\n", model ? model : "(default)");
+        } else if (session->llm && llm_is_ready(session->llm)) {
+            printf("Local LLM: Loaded\n");
             LLMModelInfo* info = llm_get_model_info(session->llm);
             if (info) {
-                printf("Model: %s\n", info->model_name);
-                printf("Context: %d tokens\n", info->context_length);
-                printf("Backend: %s", llm_gpu_backend_name(info->gpu_backend));
-                if (info->n_gpu_layers > 0) {
-                    printf(" (%d GPU layers)", info->n_gpu_layers);
-                }
-                printf("\n");
+                printf("  Model: %s\n", info->model_name);
+                printf("  Context: %d tokens\n", info->context_length);
                 llm_model_info_free(info);
             }
         } else {
-            printf("Status: Not loaded\n");
-            char* default_path = llm_get_default_model_path();
-            printf("\nDefault model path:\n  %s\n", default_path);
-            free(default_path);
+            printf("Status: No AI active\n");
+        }
+
+        if (session->ai_registry) {
+            int count = ai_registry_count(session->ai_registry);
+            if (count > 0) {
+                printf("\nConfigured providers: %d\n", count);
+            }
         }
 
         printf("\nCommands:\n");
-        printf("  /ai load [path]  - Load AI model\n");
-        printf("  /ai unload       - Unload AI model\n");
-        printf("  /ai test         - Test AI with simple query\n");
+        printf("  /ai providers     - List available providers\n");
+        printf("  /ai use <name>    - Switch to a provider\n");
+        printf("  /ai test          - Test current AI\n");
+        printf("  /ai load [path]   - Load local GGUF model\n");
+        printf("  /ai unload        - Unload AI\n");
+        printf("\nConfiguration: cyxmake.toml\n");
         printf("\n");
     }
 

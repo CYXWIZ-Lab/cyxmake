@@ -14,6 +14,7 @@ set(CYXMAKE_CORE_SOURCES
     llm/llm_interface.c
     llm/prompt_templates.c
     llm/error_analyzer.c
+    llm/ai_provider.c
 
     # Phase 1: Error Recovery System
     recovery/error_diagnosis.c
@@ -58,6 +59,8 @@ endif()
 # Link CURL if available
 if(CURL_FOUND)
     target_link_libraries(cyxmake_core PUBLIC CURL::libcurl)
+    target_compile_definitions(cyxmake_core PUBLIC CYXMAKE_USE_CURL)
+    message(STATUS "CURL enabled - HTTP AI providers available")
 endif()
 
 # Compiler warnings

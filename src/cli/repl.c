@@ -14,6 +14,7 @@
 #include "cyxmake/permission.h"
 #include "cyxmake/conversation_context.h"
 #include "cyxmake/build_executor.h"
+#include "cyxmake/ai_provider.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -119,6 +120,24 @@ ReplSession* repl_session_create(const ReplConfig* config, Orchestrator* orch) {
     /* Initialize conversation context */
     session->conversation = conversation_context_create(session->config.history_size);
 
+    /* Initialize AI provider registry and load from config */
+    session->ai_registry = ai_registry_create();
+    if (session->ai_registry) {
+        int loaded = ai_registry_load_config(session->ai_registry, NULL);
+        if (loaded > 0) {
+            log_debug("Loaded %d AI providers from config", loaded);
+            /* Set current provider to default */
+            session->current_provider = ai_registry_get_default(session->ai_registry);
+        } else {
+            /* No config, try to create from environment */
+            AIProvider* env_provider = ai_provider_from_env();
+            if (env_provider) {
+                log_debug("Using AI provider from environment");
+                session->current_provider = env_provider;
+            }
+        }
+    }
+
     session->running = true;
     session->command_count = 0;
 
@@ -146,6 +165,10 @@ void repl_session_free(ReplSession* session) {
 
     /* Free conversation context */
     conversation_context_free(session->conversation);
+
+    /* Free AI provider registry */
+    ai_registry_free(session->ai_registry);
+    /* Note: current_provider is freed by registry, don't double-free */
 
     /* Note: Don't free orchestrator - it may be shared */
 
