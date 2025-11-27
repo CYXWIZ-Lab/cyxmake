@@ -6,7 +6,8 @@
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
-[![Version](https://img.shields.io/badge/version-0.1.0--alpha-orange.svg)]()
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
+[![Version](https://img.shields.io/badge/version-0.2.0--beta-blue.svg)]()
 
 ---
 
@@ -62,89 +63,152 @@ Build successful! (2m 34s)
 
 ## Key Features
 
-### 🗣️ Natural Language Interface
+### Natural Language Interface
+
+Talk to your build system in plain English:
 
 ```bash
-cyxmake create "C++ game engine with SDL2 and OpenGL, targeting Windows and Linux"
-# → Full project structure generated
+cyxmake> build the project
+cyxmake> read the error log and fix it
+cyxmake> install SDL2
+cyxmake> @ai explain why this is failing
 ```
 
-### 🤖 Autonomous Error Recovery
+### Multi-Provider AI Support
+
+Connect to any AI provider - local or cloud:
+
+| Provider | Type | Description |
+|----------|------|-------------|
+| **Ollama** | Local | Run models locally, no API key needed |
+| **LM Studio** | Local | Use any GGUF model via OpenAI-compatible API |
+| **OpenAI** | Cloud | GPT-4o, GPT-4o-mini |
+| **Anthropic** | Cloud | Claude 3.5 Sonnet, Claude 3 Opus |
+| **Google Gemini** | Cloud | Gemini 1.5 Pro/Flash |
+| **OpenRouter** | Cloud | Access 100+ models via one API |
+| **Groq** | Cloud | Ultra-fast Llama inference |
+
+### Intelligent Command Routing
+
+CyxMake knows when to handle commands locally vs. when to ask the AI:
+
+```bash
+cyxmake> build              # Simple - handled locally (90% confidence)
+cyxmake> read readme and follow the instructions to build
+                            # Complex - routed to AI (45% confidence)
+cyxmake> @ai what's wrong?  # Explicit AI routing
+```
+
+### Autonomous Error Recovery
 
 When builds fail, CyxMake:
-1. **Diagnoses** the error using AI
-2. **Generates** fix strategies
-3. **Applies** fixes automatically
-4. **Retries** until success
+1. **Diagnoses** the error using pattern matching + AI
+2. **Generates** fix strategies with priority ranking
+3. **Suggests** solutions (install dependencies, fix configs)
+4. **Learns** from your project context
 
-### 🌍 Universal Compatibility
+### Universal Tool Discovery
 
-One tool for all languages and build systems:
-- **C/C++**: CMake, Make, Meson
-- **Python**: pip, Poetry, setuptools
-- **JavaScript/TypeScript**: npm, Webpack, Vite
-- **Rust**: Cargo
-- **Java**: Maven, Gradle
-- **Go**: go build
+Automatically finds and uses your installed tools:
 
-### 🔒 Privacy-First
-
-- **Local AI model** (bundled, runs offline)
-- **No code sent to cloud** (optional API fallback for complex errors)
-- **Open source core** (auditable, transparent)
+- **Compilers**: gcc, g++, clang, MSVC (cl), rustc
+- **Build Systems**: CMake, Make, Ninja, MSBuild, Cargo, npm
+- **Package Managers**: apt, brew, vcpkg, winget, pip, npm, cargo
+- **Version Control**: git, svn, hg
+- **Linters**: clang-tidy, cppcheck, eslint
 
 ---
 
 ## Installation
 
-### Linux / macOS
+### From Source (Recommended)
 
 ```bash
-curl -sSL https://install.cyxmake.com | bash
-```
-
-### Windows
-
-```powershell
-irm https://install.cyxmake.com/windows | iex
-```
-
-### From Source
-
-```bash
-git clone https://github.com/cyxmake/cyxmake.git
+# Clone the repository
+git clone https://github.com/CYXWIZ-Lab/cyxmake.git
 cd cyxmake
+
+# Initialize submodules
+git submodule update --init --recursive
+
+# Build
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build .
-sudo cmake --install .
+
+# Run
+./bin/cyxmake              # Linux/macOS
+./bin/Release/cyxmake.exe  # Windows
+```
+
+### Optional: Install CURL for Cloud AI Providers
+
+```bash
+# Ubuntu/Debian
+sudo apt install libcurl4-openssl-dev
+
+# macOS
+brew install curl
+
+# Windows (vcpkg)
+vcpkg install curl:x64-windows
 ```
 
 ---
 
 ## Quick Start
 
-### Building an Existing Project
+### 1. Launch CyxMake
 
 ```bash
 cd your-project
-cyxmake init       # Analyze project structure
-cyxmake build      # Build automatically
+cyxmake
 ```
 
-### Creating a New Project
+### 2. Configure AI (Optional but Recommended)
 
-```bash
-cyxmake create
-# Interactive wizard guides you through project setup
+Create `cyxmake.toml` in your project root:
+
+```toml
+[ai]
+default_provider = "ollama"
+timeout = 180
+
+# Local Ollama
+[ai.providers.ollama]
+enabled = true
+type = "ollama"
+base_url = "http://localhost:11434"
+model = "llama2"
+
+# Or use LM Studio
+[ai.providers.lmstudio]
+enabled = true
+type = "custom"
+api_key = "not-needed"
+base_url = "http://localhost:1234/v1"  # Must include /v1
+model = "your-model-name"
+
+# Or cloud providers
+[ai.providers.openai]
+enabled = true
+type = "openai"
+api_key = "${OPENAI_API_KEY}"
+base_url = "https://api.openai.com/v1"
+model = "gpt-4o-mini"
 ```
 
-### Using Natural Language
+### 3. Use CyxMake
 
 ```bash
-cyxmake create "Python web API with FastAPI and PostgreSQL"
-cyxmake create "Rust CLI tool with clap for argument parsing"
-cyxmake create "React app with TypeScript and TailwindCSS"
+cyxmake> /ai providers          # List available AI providers
+cyxmake> /ai use ollama         # Switch to Ollama
+cyxmake> /ai test               # Test AI connection
+
+cyxmake> build                  # Build your project
+cyxmake> read main.c            # View a file
+cyxmake> install SDL2           # Install a dependency
+cyxmake> @ai fix the errors     # Ask AI for help
 ```
 
 ---
@@ -154,98 +218,117 @@ cyxmake create "React app with TypeScript and TailwindCSS"
 ### Architecture
 
 ```
-┌─────────────────────────────────────┐
-│      CyxMake (AI Orchestrator)      │
-│  • Project Analysis                 │
-│  • Error Diagnosis                  │
-│  • Fix Generation                   │
-│  • Autonomous Recovery              │
-└─────────────────────────────────────┘
-            │
-    ┌───────┴───────┐
-    ▼               ▼
-┌────────┐     ┌────────┐
-│  Local │     │ Cloud  │
-│   AI   │     │   AI   │
-│ (3B LLM)│    │(Optional)│
-└────────┘     └────────┘
-            │
-    ┌───────┴───────┐
-    ▼               ▼
-┌────────┐     ┌────────┐
-│ CMake  │ ... │  npm   │
-│ Maven  │     │  Cargo │
-└────────┘     └────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                     User Interface (REPL)                    │
+│  • Natural language input    • Slash commands (/build, etc.) │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Command Processing                         │
+│  ┌──────────────────────┐  ┌──────────────────────────────┐ │
+│  │ Intent Detection     │  │ Confidence Scoring           │ │
+│  │ (Local Parser)       │  │ (Route to AI if < 60%)       │ │
+│  └──────────────────────┘  └──────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+┌──────────────────┐ ┌──────────────┐ ┌──────────────────┐
+│  Local Execution │ │  AI Agent    │ │  Error Recovery  │
+│  (build, read,   │ │  System      │ │  System          │
+│   clean, etc.)   │ │  (Complex    │ │  (Diagnosis,     │
+│                  │ │   queries)   │ │   suggestions)   │
+└──────────────────┘ └──────────────┘ └──────────────────┘
+              │               │               │
+              └───────────────┼───────────────┘
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 Tool Discovery & Execution                   │
+│  Compilers | Build Systems | Package Managers | VCS          │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 **CyxMake orchestrates existing tools. It doesn't replace them.**
 
-### Local AI Model
+### AI Provider Options
 
-- **Model**: Qwen2.5-Coder-3B-Instruct (specialized for code)
-- **Size**: 1.8 GB (quantized to 4-bit)
-- **Speed**: < 2 seconds per query on consumer CPU
-- **Accuracy**: 85-90% on build tasks
-- **Privacy**: Runs entirely offline, no code sent to servers
+| Option | Pros | Cons |
+|--------|------|------|
+| **Ollama (Local)** | Free, private, no internet | Requires setup |
+| **LM Studio** | Easy GUI, any GGUF model | Requires RAM |
+| **OpenAI/Anthropic** | Best quality, easy setup | Costs money, needs internet |
+| **OpenRouter** | Access to many models | Needs API key |
 
-### Cloud Fallback (Optional)
+### Privacy
 
-For complex errors (10-15% of cases):
-- Configure API key in `.env`
-- Only error messages sent (no source code)
-- Providers: Anthropic Claude, OpenAI GPT
-- Cost: $0-5/month typical usage
-
----
-
-## Comparison
-
-| Feature | CMake | Maven | npm | **CyxMake** |
-|---------|-------|-------|-----|-------------|
-| Learning Curve | High | High | Medium | **Minimal** |
-| Error Diagnosis | Manual | Manual | Manual | **Automatic** |
-| Cross-Platform | Partial | No | No | **Yes** |
-| Dependency Mgmt | Finds only | Java only | JS only | **Universal** |
-| Natural Language | No | No | No | **Yes** |
-| Works Offline | Yes | Partial | No | **Yes** |
+- **Local providers**: All processing happens on your machine
+- **Cloud providers**: Only prompts and error messages sent (not source code)
+- **Configurable**: Choose what provider to use per-query
 
 ---
 
-## Documentation
+## Commands Reference
 
-- [Getting Started](docs/getting-started.md)
-- [User Guide](docs/user-guide.md)
-- [Architecture](docs/architecture.md)
-- [Tool Development](docs/tool-development.md)
-- [API Reference](docs/api-reference.md)
-- [Contributing](CONTRIBUTING.md)
+### Slash Commands
+
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `/help` | `/h` | Show available commands |
+| `/build` | `/b` | Build the project |
+| `/clean` | `/c` | Clean build artifacts |
+| `/init` | `/i` | Analyze project structure |
+| `/status` | `/s` | Show project and tool status |
+| `/ai` | - | AI status and provider management |
+| `/ai providers` | - | List configured AI providers |
+| `/ai use <name>` | - | Switch to a specific provider |
+| `/ai test` | - | Test current AI connection |
+| `/exit` | `/q` | Exit CyxMake |
+
+### Natural Language
+
+| Command | What It Does |
+|---------|--------------|
+| `build` | Compile the project |
+| `read main.c` | Display file contents |
+| `create hello.py` | Create a new file |
+| `install SDL2` | Install using best package manager |
+| `clean` | Remove build artifacts |
+| `@ai <query>` | Force AI routing |
+| `ai: <query>` | Force AI routing |
+| `ask: <query>` | Force AI routing |
 
 ---
 
 ## Project Status
 
-**Current Phase**: Alpha (v0.1.0)
+**Current Phase**: Beta (v0.2.0)
 
-**Implemented**:
-- [x] Project context analysis
-- [x] Build system detection
-- [x] Dependency scanning
-- [x] Local AI integration (llama.cpp)
-- [x] Basic error recovery
+### Implemented
 
-**In Progress**:
-- [ ] Fine-tuned model training
-- [ ] Cloud API fallback
-- [ ] Tool marketplace
-- [ ] CI/CD integration
+- [x] **Interactive REPL** - Full command-line interface
+- [x] **Natural Language Parsing** - Intent detection with confidence scoring
+- [x] **Intelligent Routing** - Complex queries go to AI, simple ones execute locally
+- [x] **Multi-Provider AI** - Ollama, LM Studio, OpenAI, Anthropic, Gemini, OpenRouter, Groq
+- [x] **AI Agent System** - LLM-powered action execution
+- [x] **Tool Discovery** - Auto-detects compilers, build tools, package managers
+- [x] **Tool Execution** - Safe command execution with output capture
+- [x] **Error Recovery** - Pattern matching + AI-powered diagnosis
+- [x] **Permission System** - Confirms before destructive operations
+- [x] **Conversation Context** - Remembers files, errors, history
+- [x] **Cross-Platform** - Windows, Linux, macOS
 
-**Planned**:
-- [ ] Multi-project workspaces
-- [ ] Build optimization
+### In Progress
+
+- [ ] llama.cpp direct model loading (interface ready)
+- [ ] Interactive error fixing
+- [ ] Project generation from natural language
+
+### Planned
+
 - [ ] IDE plugins (VSCode, JetBrains)
-- [ ] Team collaboration features
-
-See [ROADMAP.md](ROADMAP.md) for detailed timeline.
+- [ ] CI/CD integration
+- [ ] Plugin system for custom tools
 
 ---
 
@@ -257,14 +340,14 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ```bash
 # Clone repository
-git clone https://github.com/cyxmake/cyxmake.git
+git clone https://github.com/CYXWIZ-Lab/cyxmake.git
 cd cyxmake
 
-# Install dependencies
-./scripts/install-deps.sh
+# Initialize submodules
+git submodule update --init --recursive
 
 # Build in debug mode
-mkdir build-debug && cd build-debug
+mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Debug -DCYXMAKE_BUILD_TESTS=ON
 cmake --build .
 
@@ -272,25 +355,16 @@ cmake --build .
 ctest --output-on-failure
 
 # Run CyxMake
-./bin/cyxmake --version
+./bin/Debug/cyxmake.exe  # Windows
+./bin/cyxmake            # Linux/macOS
 ```
 
 ### Areas We Need Help
 
-- **Tools**: Write tools for new build systems (Bazel, Buck, etc.)
-- **Testing**: Test on diverse projects, report issues
+- **Testing**: Test on diverse projects across platforms
 - **Documentation**: Improve docs, write tutorials
-- **Platforms**: Windows native support, macOS ARM optimization
-- **AI**: Help with model fine-tuning, prompt engineering
-
----
-
-## Community
-
-- **Discord**: [discord.gg/cyxmake](https://discord.gg/cyxmake) - Chat with developers
-- **Forum**: [forum.cyxmake.com](https://forum.cyxmake.com) - Ask questions, share projects
-- **Twitter**: [@cyxmake](https://twitter.com/cyxmake) - Updates and announcements
-- **Blog**: [blog.cyxmake.com](https://blog.cyxmake.com) - Technical deep dives
+- **AI Providers**: Add support for more providers
+- **Tools**: Add support for more build systems (Bazel, Buck, etc.)
 
 ---
 
@@ -302,27 +376,23 @@ ctest --output-on-failure
 
 ### Does it work offline?
 
-**Yes.** The bundled local AI model (1.8 GB) runs entirely offline. Cloud fallback is optional.
+**Yes.** Use Ollama or LM Studio to run AI models locally. No internet required.
 
 ### Is my code sent to the cloud?
 
-**No.** Only error messages (not source code) are sent to cloud APIs if you enable the optional fallback. By default, everything runs locally.
-
-### How accurate is the AI?
-
-The local model handles 85-90% of build tasks successfully. Cloud fallback handles complex edge cases.
+**Only if you use cloud providers.** With local providers (Ollama, LM Studio, llama.cpp), everything stays on your machine. With cloud providers, only prompts and error messages are sent - not your source code.
 
 ### What languages are supported?
 
-All languages with existing build systems: C, C++, Python, JavaScript, TypeScript, Rust, Go, Java, C#, Ruby, PHP, and more.
+All languages with existing build systems: C, C++, Python, JavaScript, TypeScript, Rust, Go, Java, and more.
 
 ### Is it free?
 
-**Yes.** Core is open source (Apache 2.0). No subscription required for local usage. Cloud fallback has optional paid tiers.
+**Yes.** CyxMake is open source (Apache 2.0). Use local AI providers for completely free usage, or bring your own API keys for cloud providers.
 
 ### How is this different from GitHub Copilot?
 
-Copilot assists with writing code. CyxMake assists with building code. Complementary tools.
+Copilot assists with writing code. CyxMake assists with building code. They're complementary tools.
 
 ---
 
@@ -334,56 +404,24 @@ CyxMake is licensed under the [Apache License 2.0](LICENSE).
 
 - **llama.cpp**: MIT License
 - **cJSON**: MIT License
-- **Qwen2.5-Coder-3B**: Apache 2.0 License
-
-See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for details.
+- **tomlc99**: MIT License
 
 ---
 
-## Credits
+## Documentation
 
-Built by developers, for developers.
+For detailed documentation, see:
 
-**Core Team**:
-- [Your Name] - Creator & Lead Developer
-- [Contributors] - See [CONTRIBUTORS.md](CONTRIBUTORS.md)
-
-**Special Thanks**:
-- Alibaba Cloud (Qwen model)
-- Georgi Gerganov (llama.cpp)
-- The open source community
+- [summary.md](summary.md) - Complete system guide
+- [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution guidelines
+- [CLAUDE.md](CLAUDE.md) - Development reference
 
 ---
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/cyxmake/cyxmake/issues)
-- **Security**: [security@cyxmake.com](mailto:security@cyxmake.com)
-- **Enterprise**: [sales@cyxmake.com](mailto:sales@cyxmake.com)
-
----
-
-## Citation
-
-If you use CyxMake in your research or project, please cite:
-
-```bibtex
-@software{cyxmake2025,
-  title = {CyxMake: AI-Powered Build Automation System},
-  author = {CyxMake Team},
-  year = {2025},
-  url = {https://github.com/cyxmake/cyxmake}
-}
-```
+- **Issues**: [GitHub Issues](https://github.com/CYXWIZ-Lab/cyxmake/issues)
 
 ---
 
 **Stop fighting build systems. Start building.**
-
-**[Get Started →](docs/getting-started.md)**
-
----
-
-<p align="center">
-  Made with ❤️ by the CyxMake Team
-</p>
