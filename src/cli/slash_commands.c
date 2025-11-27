@@ -9,6 +9,7 @@
 #include "cyxmake/build_executor.h"
 #include "cyxmake/file_ops.h"
 #include "cyxmake/conversation_context.h"
+#include "cyxmake/llm_interface.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -54,6 +55,7 @@ static const SlashCommand slash_commands[] = {
     {"history", "hist", "Show command history",         cmd_history},
     {"version", "v",    "Show version info",            cmd_version},
     {"context", "ctx",  "Show conversation context",    cmd_context},
+    {"ai",      NULL,   "AI status and commands",       cmd_ai},
     {NULL, NULL, NULL, NULL}
 };
 
@@ -654,6 +656,201 @@ bool cmd_context(ReplSession* session, const char* args) {
             printf("  [%s] %s\n", message_role_name(msg->role), preview);
         }
 
+        printf("\n");
+    }
+
+    return true;
+}
+
+/* /ai command */
+bool cmd_ai(ReplSession* session, const char* args) {
+    if (args && strlen(args) > 0) {
+        /* Handle subcommands */
+        if (strncmp(args, "load", 4) == 0) {
+            /* /ai load [path] - load a model */
+            const char* path = args + 4;
+            while (*path == ' ' || *path == '\t') path++;
+
+            if (*path == '\0') {
+                /* Use default path */
+                path = NULL;
+            }
+
+            if (session->config.colors_enabled) {
+                printf("%sLoading AI model...%s\n", COLOR_DIM, COLOR_RESET);
+            } else {
+                printf("Loading AI model...\n");
+            }
+
+            /* Get model path */
+            char* model_path = path ? strdup(path) : llm_get_default_model_path();
+            if (!model_path) {
+                printf("Could not determine model path.\n");
+                return true;
+            }
+
+            /* Check if model exists */
+            if (!llm_validate_model_file(model_path)) {
+                if (session->config.colors_enabled) {
+                    printf("%s%s Model file not found or invalid: %s%s\n",
+                           COLOR_RED, SYM_CROSS, model_path, COLOR_RESET);
+                    printf("\n%sTo download a model:%s\n", COLOR_YELLOW, COLOR_RESET);
+                    printf("  mkdir -p ~/.cyxmake/models\n");
+                    printf("  # Download Qwen2.5-Coder-3B (recommended):\n");
+                    printf("  wget https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/qwen2.5-coder-3b-instruct-q4_k_m.gguf\n");
+                    printf("  mv qwen2.5-coder-3b-instruct-q4_k_m.gguf ~/.cyxmake/models/\n");
+                } else {
+                    printf("Model file not found: %s\n", model_path);
+                }
+                free(model_path);
+                return true;
+            }
+
+            /* Shutdown existing LLM if any */
+            if (session->llm) {
+                llm_shutdown(session->llm);
+                session->llm = NULL;
+            }
+
+            /* Create config and load */
+            LLMConfig* config = llm_config_default();
+            config->model_path = model_path;
+            config->verbose = session->config.verbose;
+
+            session->llm = llm_init(config);
+            llm_config_free(config);
+
+            if (session->llm) {
+                if (session->config.colors_enabled) {
+                    printf("%s%s AI model loaded successfully!%s\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET);
+                } else {
+                    printf("AI model loaded successfully!\n");
+                }
+
+                /* Show model info */
+                LLMModelInfo* info = llm_get_model_info(session->llm);
+                if (info) {
+                    printf("  Model: %s\n", info->model_name);
+                    printf("  Context: %d tokens\n", info->context_length);
+                    if (info->n_gpu_layers > 0) {
+                        printf("  GPU: %s (%d layers)\n",
+                               llm_gpu_backend_name(info->gpu_backend), info->n_gpu_layers);
+                    } else {
+                        printf("  Running on CPU\n");
+                    }
+                    llm_model_info_free(info);
+                }
+            } else {
+                if (session->config.colors_enabled) {
+                    printf("%s%s Failed to load AI model%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+                } else {
+                    printf("Failed to load AI model.\n");
+                }
+            }
+
+            free(model_path);
+            return true;
+        }
+        else if (strncmp(args, "unload", 6) == 0) {
+            /* /ai unload - unload the model */
+            if (session->llm) {
+                llm_shutdown(session->llm);
+                session->llm = NULL;
+                printf("AI model unloaded.\n");
+            } else {
+                printf("No AI model loaded.\n");
+            }
+            return true;
+        }
+        else if (strncmp(args, "test", 4) == 0) {
+            /* /ai test - test with a simple query */
+            if (!session->llm || !llm_is_ready(session->llm)) {
+                printf("AI not loaded. Use /ai load first.\n");
+                return true;
+            }
+
+            if (session->config.colors_enabled) {
+                printf("%sTesting AI...%s\n", COLOR_DIM, COLOR_RESET);
+            }
+
+            char* response = llm_query_simple(session->llm,
+                "Say 'Hello! AI is working.' in one short sentence.", 50);
+
+            if (response) {
+                if (session->config.colors_enabled) {
+                    printf("%s%s AI response:%s %s\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET, response);
+                } else {
+                    printf("AI response: %s\n", response);
+                }
+                free(response);
+            } else {
+                printf("AI test failed.\n");
+            }
+            return true;
+        }
+    }
+
+    /* Show AI status */
+    if (session->config.colors_enabled) {
+        printf("\n%s%sAI Status%s\n\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
+
+        if (session->llm && llm_is_ready(session->llm)) {
+            printf("%sStatus:%s %s%sLoaded%s\n", COLOR_YELLOW, COLOR_RESET,
+                   COLOR_GREEN, COLOR_BOLD, COLOR_RESET);
+
+            LLMModelInfo* info = llm_get_model_info(session->llm);
+            if (info) {
+                printf("%sModel:%s %s\n", COLOR_YELLOW, COLOR_RESET, info->model_name);
+                printf("%sContext:%s %d tokens\n", COLOR_YELLOW, COLOR_RESET, info->context_length);
+                printf("%sBackend:%s %s", COLOR_YELLOW, COLOR_RESET,
+                       llm_gpu_backend_name(info->gpu_backend));
+                if (info->n_gpu_layers > 0) {
+                    printf(" (%d GPU layers)", info->n_gpu_layers);
+                }
+                printf("\n");
+                llm_model_info_free(info);
+            }
+        } else {
+            printf("%sStatus:%s %s%sNot loaded%s\n", COLOR_YELLOW, COLOR_RESET,
+                   COLOR_RED, COLOR_BOLD, COLOR_RESET);
+
+            char* default_path = llm_get_default_model_path();
+            printf("\n%sDefault model path:%s\n  %s\n", COLOR_YELLOW, COLOR_RESET, default_path);
+            free(default_path);
+        }
+
+        printf("\n%sCommands:%s\n", COLOR_YELLOW, COLOR_RESET);
+        printf("  %s/ai load [path]%s  - Load AI model\n", COLOR_CYAN, COLOR_RESET);
+        printf("  %s/ai unload%s       - Unload AI model\n", COLOR_CYAN, COLOR_RESET);
+        printf("  %s/ai test%s         - Test AI with simple query\n", COLOR_CYAN, COLOR_RESET);
+        printf("\n");
+    } else {
+        printf("\nAI Status\n\n");
+
+        if (session->llm && llm_is_ready(session->llm)) {
+            printf("Status: Loaded\n");
+            LLMModelInfo* info = llm_get_model_info(session->llm);
+            if (info) {
+                printf("Model: %s\n", info->model_name);
+                printf("Context: %d tokens\n", info->context_length);
+                printf("Backend: %s", llm_gpu_backend_name(info->gpu_backend));
+                if (info->n_gpu_layers > 0) {
+                    printf(" (%d GPU layers)", info->n_gpu_layers);
+                }
+                printf("\n");
+                llm_model_info_free(info);
+            }
+        } else {
+            printf("Status: Not loaded\n");
+            char* default_path = llm_get_default_model_path();
+            printf("\nDefault model path:\n  %s\n", default_path);
+            free(default_path);
+        }
+
+        printf("\nCommands:\n");
+        printf("  /ai load [path]  - Load AI model\n");
+        printf("  /ai unload       - Unload AI model\n");
+        printf("  /ai test         - Test AI with simple query\n");
         printf("\n");
     }
 

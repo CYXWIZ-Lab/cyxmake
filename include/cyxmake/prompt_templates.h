@@ -97,6 +97,127 @@ char* prompt_smart_error_analysis(const char* error_output,
 char* format_llm_response(const char* response);
 
 /* ========================================================================
+ * REPL Context-Aware Prompts
+ * ======================================================================== */
+
+/**
+ * Generate prompt to explain code or concept with context
+ * @param query What to explain
+ * @param current_file Current file being discussed (optional)
+ * @param file_content File content or snippet (optional)
+ * @param conversation_context Recent conversation for context (optional)
+ * @return Allocated prompt string (caller must free)
+ */
+char* prompt_explain_with_context(const char* query,
+                                   const char* current_file,
+                                   const char* file_content,
+                                   const char* conversation_context);
+
+/**
+ * Generate prompt to fix an error with context
+ * @param error_message The error to fix
+ * @param current_file Current file (optional)
+ * @param file_content File content (optional)
+ * @param conversation_context Recent conversation (optional)
+ * @return Allocated prompt string (caller must free)
+ */
+char* prompt_fix_with_context(const char* error_message,
+                               const char* current_file,
+                               const char* file_content,
+                               const char* conversation_context);
+
+/**
+ * Generate prompt for general AI assistance
+ * @param user_query The user's question
+ * @param conversation_context Recent conversation (optional)
+ * @return Allocated prompt string (caller must free)
+ */
+char* prompt_general_assistance(const char* user_query,
+                                 const char* conversation_context);
+
+/* ========================================================================
+ * AI Agent System
+ * ======================================================================== */
+
+/**
+ * Action types the AI agent can perform
+ */
+typedef enum {
+    AI_ACTION_NONE,         /* No action, just respond */
+    AI_ACTION_READ_FILE,    /* Read a file */
+    AI_ACTION_CREATE_FILE,  /* Create a file with content */
+    AI_ACTION_DELETE_FILE,  /* Delete a file */
+    AI_ACTION_DELETE_DIR,   /* Delete a directory */
+    AI_ACTION_BUILD,        /* Build the project */
+    AI_ACTION_CLEAN,        /* Clean build artifacts */
+    AI_ACTION_INSTALL,      /* Install a package */
+    AI_ACTION_RUN_COMMAND,  /* Run a shell command */
+    AI_ACTION_LIST_FILES,   /* List files in directory */
+    AI_ACTION_MULTI         /* Multiple actions in sequence */
+} AIActionType;
+
+/**
+ * AI agent action
+ */
+typedef struct AIAction {
+    AIActionType type;
+    char* target;           /* File path, package name, etc. */
+    char* content;          /* File content for create, command for run */
+    char* reason;           /* Why this action is needed */
+    struct AIAction* next;  /* For chained actions */
+} AIAction;
+
+/**
+ * AI agent response
+ */
+typedef struct {
+    char* message;          /* Text response to show user */
+    AIAction* actions;      /* Actions to perform (can be NULL) */
+    bool needs_confirmation;/* Whether to ask user before executing */
+} AIAgentResponse;
+
+/**
+ * Generate prompt for AI agent with available actions
+ * @param user_request User's natural language request
+ * @param current_dir Current working directory
+ * @param current_file Current file being discussed (optional)
+ * @param last_error Last error message (optional)
+ * @param conversation_context Recent conversation (optional)
+ * @return Allocated prompt string (caller must free)
+ */
+char* prompt_ai_agent(const char* user_request,
+                       const char* current_dir,
+                       const char* current_file,
+                       const char* last_error,
+                       const char* conversation_context);
+
+/**
+ * Parse AI agent response to extract actions
+ * @param response Raw AI response text
+ * @return Parsed agent response (caller must free with ai_agent_response_free)
+ */
+AIAgentResponse* parse_ai_agent_response(const char* response);
+
+/**
+ * Free AI action chain
+ * @param action Action to free (frees entire chain)
+ */
+void ai_action_free(AIAction* action);
+
+/**
+ * Free AI agent response
+ * @param response Response to free
+ */
+void ai_agent_response_free(AIAgentResponse* response);
+
+/**
+ * Get action type name
+ * @param type Action type
+ * @return Static string name
+ */
+const char* ai_action_type_name(AIActionType type);
+
+/* ========================================================================
  * Natural Language Command Parsing
  * ======================================================================== */
 

@@ -54,7 +54,25 @@ add_custom_command(TARGET test_tool_executor POST_BUILD
     COMMENT "Copying test_tool_executor to bin directory"
 )
 
-message(STATUS "Tests configured: test_logger, test_error_recovery, test_tool_executor")
+# AI Agent test executable
+add_executable(test_ai_agent test_ai_agent.c)
+target_link_libraries(test_ai_agent PRIVATE cyxmake_core)
+target_include_directories(test_ai_agent PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+# Set output directory
+set_target_properties(test_ai_agent PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+
+# Copy to bin directory for easy access
+add_custom_command(TARGET test_ai_agent POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        $<TARGET_FILE:test_ai_agent>
+        ${CMAKE_BINARY_DIR}/bin/test_ai_agent${CMAKE_EXECUTABLE_SUFFIX}
+    COMMENT "Copying test_ai_agent to bin directory"
+)
+
+message(STATUS "Tests configured: test_logger, test_error_recovery, test_tool_executor, test_ai_agent")
 
 # TODO: Add more unit tests
 # TODO: Add integration tests

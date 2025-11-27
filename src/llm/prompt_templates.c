@@ -404,6 +404,453 @@ char* format_llm_response(const char* response) {
 }
 
 /* ========================================================================
+ * REPL Context-Aware Prompts
+ * ======================================================================== */
+
+char* prompt_explain_with_context(const char* query,
+                                   const char* current_file,
+                                   const char* file_content,
+                                   const char* conversation_context) {
+    if (!query) return NULL;
+
+    char* prompt = malloc(MAX_PROMPT_SIZE);
+    if (!prompt) return NULL;
+
+    size_t offset = 0;
+
+    /* System instruction */
+    offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+        "You are a helpful coding assistant. Explain concepts clearly and concisely.\n\n");
+
+    /* Add conversation context if available */
+    if (conversation_context && strlen(conversation_context) > 0) {
+        offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+            "Recent conversation:\n%s\n\n", conversation_context);
+    }
+
+    /* Add current file context if available */
+    if (current_file) {
+        offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+            "Current file: %s\n", current_file);
+    }
+
+    if (file_content && strlen(file_content) > 0) {
+        offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+            "\nFile content:\n```\n%.2000s\n```\n\n", file_content);
+    }
+
+    /* The actual query */
+    offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+        "User question: %s\n\n"
+        "Provide a clear, concise explanation. "
+        "If referring to specific code, quote the relevant lines.",
+        query);
+
+    return prompt;
+}
+
+char* prompt_fix_with_context(const char* error_message,
+                               const char* current_file,
+                               const char* file_content,
+                               const char* conversation_context) {
+    if (!error_message) return NULL;
+
+    char* prompt = malloc(MAX_PROMPT_SIZE);
+    if (!prompt) return NULL;
+
+    size_t offset = 0;
+
+    /* System instruction */
+    offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+        "You are an expert debugger. Analyze the error and provide a fix.\n\n");
+
+    /* Add conversation context if available */
+    if (conversation_context && strlen(conversation_context) > 0) {
+        offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+            "Recent context:\n%s\n\n", conversation_context);
+    }
+
+    /* Add file context */
+    if (current_file) {
+        offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+            "File: %s\n", current_file);
+    }
+
+    if (file_content && strlen(file_content) > 0) {
+        offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+            "\nCode:\n```\n%.2000s\n```\n\n", file_content);
+    }
+
+    /* The error */
+    offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+        "Error to fix:\n%s\n\n"
+        "Provide:\n"
+        "1. The cause of this error\n"
+        "2. The specific fix (show corrected code if applicable)\n"
+        "3. How to prevent this in the future\n\n"
+        "Be concise and actionable.",
+        error_message);
+
+    return prompt;
+}
+
+char* prompt_general_assistance(const char* user_query,
+                                 const char* conversation_context) {
+    if (!user_query) return NULL;
+
+    char* prompt = malloc(MAX_PROMPT_SIZE);
+    if (!prompt) return NULL;
+
+    size_t offset = 0;
+
+    /* System instruction */
+    offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+        "You are CyxMake, an AI build assistant. Help with build systems, "
+        "compilation, debugging, and general development questions.\n\n");
+
+    /* Add conversation context if available */
+    if (conversation_context && strlen(conversation_context) > 0) {
+        offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+            "Conversation history:\n%s\n\n", conversation_context);
+    }
+
+    /* The query */
+    offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+        "User: %s\n\n"
+        "Respond helpfully and concisely.",
+        user_query);
+
+    return prompt;
+}
+
+/* ========================================================================
+ * AI Agent System
+ * ======================================================================== */
+
+char* prompt_ai_agent(const char* user_request,
+                       const char* current_dir,
+                       const char* current_file,
+                       const char* last_error,
+                       const char* conversation_context) {
+    if (!user_request) return NULL;
+
+    char* prompt = malloc(MAX_PROMPT_SIZE);
+    if (!prompt) return NULL;
+
+    size_t offset = 0;
+
+    /* System instruction with available actions */
+    offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+        "You are CyxMake AI Agent. You can perform actions to help the user.\n\n"
+        "AVAILABLE ACTIONS:\n"
+        "- read_file: Read and display a file's contents\n"
+        "- create_file: Create a new file with specified content\n"
+        "- delete_file: Delete a file\n"
+        "- delete_dir: Delete a directory and its contents\n"
+        "- build: Build the project\n"
+        "- clean: Clean build artifacts\n"
+        "- install: Install a package/dependency\n"
+        "- run_command: Run a shell command\n"
+        "- list_files: List files in a directory\n"
+        "- none: Just respond without performing an action\n\n");
+
+    /* Add context */
+    offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+        "CURRENT CONTEXT:\n"
+        "- Working directory: %s\n",
+        current_dir ? current_dir : ".");
+
+    if (current_file) {
+        offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+            "- Current file: %s\n", current_file);
+    }
+
+    if (last_error) {
+        offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+            "- Last error: %s\n", last_error);
+    }
+
+    offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset, "\n");
+
+    /* Add conversation context if available */
+    if (conversation_context && strlen(conversation_context) > 0) {
+        offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+            "RECENT CONVERSATION:\n%s\n\n", conversation_context);
+    }
+
+    /* User request */
+    offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+        "USER REQUEST: %s\n\n", user_request);
+
+    /* Response format */
+    offset += snprintf(prompt + offset, MAX_PROMPT_SIZE - offset,
+        "Respond with JSON in this exact format:\n"
+        "```json\n"
+        "{\n"
+        "  \"message\": \"Brief explanation of what you will do\",\n"
+        "  \"actions\": [\n"
+        "    {\n"
+        "      \"action\": \"<action_type>\",\n"
+        "      \"target\": \"<file path, package name, or directory>\",\n"
+        "      \"content\": \"<file content for create_file, command for run_command, or null>\",\n"
+        "      \"reason\": \"<brief reason for this action>\"\n"
+        "    }\n"
+        "  ],\n"
+        "  \"needs_confirmation\": true\n"
+        "}\n"
+        "```\n\n"
+        "RULES:\n"
+        "1. Set needs_confirmation to true for destructive actions (delete, run_command)\n"
+        "2. Set needs_confirmation to false for safe actions (read, list, build)\n"
+        "3. For multiple steps, include multiple actions in order\n"
+        "4. If unsure or request is unclear, set action to 'none' and ask for clarification\n"
+        "5. Only include the JSON, no other text\n");
+
+    return prompt;
+}
+
+/* Parse action type from string */
+static AIActionType parse_action_type(const char* action_str) {
+    if (!action_str) return AI_ACTION_NONE;
+
+    if (strcmp(action_str, "read_file") == 0) return AI_ACTION_READ_FILE;
+    if (strcmp(action_str, "create_file") == 0) return AI_ACTION_CREATE_FILE;
+    if (strcmp(action_str, "delete_file") == 0) return AI_ACTION_DELETE_FILE;
+    if (strcmp(action_str, "delete_dir") == 0) return AI_ACTION_DELETE_DIR;
+    if (strcmp(action_str, "build") == 0) return AI_ACTION_BUILD;
+    if (strcmp(action_str, "clean") == 0) return AI_ACTION_CLEAN;
+    if (strcmp(action_str, "install") == 0) return AI_ACTION_INSTALL;
+    if (strcmp(action_str, "run_command") == 0) return AI_ACTION_RUN_COMMAND;
+    if (strcmp(action_str, "list_files") == 0) return AI_ACTION_LIST_FILES;
+
+    return AI_ACTION_NONE;
+}
+
+/* Extract JSON string value */
+static char* extract_json_string(const char* json, const char* key) {
+    if (!json || !key) return NULL;
+
+    /* Build search pattern: "key": " */
+    char pattern[128];
+    snprintf(pattern, sizeof(pattern), "\"%s\":", key);
+
+    const char* start = strstr(json, pattern);
+    if (!start) return NULL;
+
+    start += strlen(pattern);
+
+    /* Skip whitespace */
+    while (*start == ' ' || *start == '\t' || *start == '\n') start++;
+
+    /* Check for null */
+    if (strncmp(start, "null", 4) == 0) return NULL;
+
+    /* Find opening quote */
+    if (*start != '"') return NULL;
+    start++;
+
+    /* Find closing quote (handle escaped quotes) */
+    const char* end = start;
+    while (*end && !(*end == '"' && *(end-1) != '\\')) {
+        end++;
+    }
+
+    if (*end != '"') return NULL;
+
+    /* Extract string */
+    size_t len = end - start;
+    char* result = malloc(len + 1);
+    if (!result) return NULL;
+
+    /* Copy and unescape basic escapes */
+    size_t j = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (start[i] == '\\' && i + 1 < len) {
+            i++;
+            switch (start[i]) {
+                case 'n': result[j++] = '\n'; break;
+                case 't': result[j++] = '\t'; break;
+                case '"': result[j++] = '"'; break;
+                case '\\': result[j++] = '\\'; break;
+                default: result[j++] = start[i]; break;
+            }
+        } else {
+            result[j++] = start[i];
+        }
+    }
+    result[j] = '\0';
+
+    return result;
+}
+
+/* Extract JSON boolean value */
+static bool extract_json_bool(const char* json, const char* key, bool default_val) {
+    if (!json || !key) return default_val;
+
+    char pattern[128];
+    snprintf(pattern, sizeof(pattern), "\"%s\":", key);
+
+    const char* start = strstr(json, pattern);
+    if (!start) return default_val;
+
+    start += strlen(pattern);
+    while (*start == ' ' || *start == '\t' || *start == '\n') start++;
+
+    if (strncmp(start, "true", 4) == 0) return true;
+    if (strncmp(start, "false", 5) == 0) return false;
+
+    return default_val;
+}
+
+AIAgentResponse* parse_ai_agent_response(const char* response) {
+    if (!response) return NULL;
+
+    AIAgentResponse* result = calloc(1, sizeof(AIAgentResponse));
+    if (!result) return NULL;
+
+    /* Find JSON block (look for ```json or just {) */
+    const char* json_start = strstr(response, "```json");
+    if (json_start) {
+        json_start += 7;
+        while (*json_start == '\n' || *json_start == '\r') json_start++;
+    } else {
+        json_start = strchr(response, '{');
+    }
+
+    if (!json_start) {
+        /* No JSON found, treat as plain message */
+        result->message = strdup(response);
+        result->needs_confirmation = false;
+        return result;
+    }
+
+    /* Find end of JSON */
+    const char* json_end = strstr(json_start, "```");
+    if (!json_end) {
+        /* Find last closing brace */
+        json_end = strrchr(json_start, '}');
+        if (json_end) json_end++;
+    }
+
+    if (!json_end) {
+        result->message = strdup(response);
+        return result;
+    }
+
+    /* Copy JSON for parsing */
+    size_t json_len = json_end - json_start;
+    char* json = malloc(json_len + 1);
+    if (!json) {
+        free(result);
+        return NULL;
+    }
+    strncpy(json, json_start, json_len);
+    json[json_len] = '\0';
+
+    /* Extract message */
+    result->message = extract_json_string(json, "message");
+
+    /* Extract needs_confirmation */
+    result->needs_confirmation = extract_json_bool(json, "needs_confirmation", true);
+
+    /* Parse actions array */
+    const char* actions_start = strstr(json, "\"actions\"");
+    if (actions_start) {
+        actions_start = strchr(actions_start, '[');
+        if (actions_start) {
+            actions_start++;
+
+            AIAction* last_action = NULL;
+
+            /* Parse each action object */
+            const char* action_start = strchr(actions_start, '{');
+            while (action_start) {
+                /* Find end of this action object */
+                const char* action_end = strchr(action_start, '}');
+                if (!action_end) break;
+
+                /* Extract action object substring */
+                size_t action_len = action_end - action_start + 1;
+                char* action_json = malloc(action_len + 1);
+                if (!action_json) break;
+                strncpy(action_json, action_start, action_len);
+                action_json[action_len] = '\0';
+
+                /* Parse action fields */
+                char* action_type_str = extract_json_string(action_json, "action");
+                AIActionType action_type = parse_action_type(action_type_str);
+                free(action_type_str);
+
+                if (action_type != AI_ACTION_NONE) {
+                    AIAction* action = calloc(1, sizeof(AIAction));
+                    if (action) {
+                        action->type = action_type;
+                        action->target = extract_json_string(action_json, "target");
+                        action->content = extract_json_string(action_json, "content");
+                        action->reason = extract_json_string(action_json, "reason");
+
+                        /* Add to chain */
+                        if (last_action) {
+                            last_action->next = action;
+                        } else {
+                            result->actions = action;
+                        }
+                        last_action = action;
+                    }
+                }
+
+                free(action_json);
+
+                /* Find next action object */
+                action_start = strchr(action_end + 1, '{');
+
+                /* Check if we've passed the actions array */
+                const char* array_end = strchr(actions_start, ']');
+                if (array_end && action_start > array_end) break;
+            }
+        }
+    }
+
+    free(json);
+    return result;
+}
+
+void ai_action_free(AIAction* action) {
+    while (action) {
+        AIAction* next = action->next;
+        free(action->target);
+        free(action->content);
+        free(action->reason);
+        free(action);
+        action = next;
+    }
+}
+
+void ai_agent_response_free(AIAgentResponse* response) {
+    if (!response) return;
+    free(response->message);
+    ai_action_free(response->actions);
+    free(response);
+}
+
+const char* ai_action_type_name(AIActionType type) {
+    switch (type) {
+        case AI_ACTION_READ_FILE:    return "Read file";
+        case AI_ACTION_CREATE_FILE:  return "Create file";
+        case AI_ACTION_DELETE_FILE:  return "Delete file";
+        case AI_ACTION_DELETE_DIR:   return "Delete directory";
+        case AI_ACTION_BUILD:        return "Build project";
+        case AI_ACTION_CLEAN:        return "Clean build";
+        case AI_ACTION_INSTALL:      return "Install package";
+        case AI_ACTION_RUN_COMMAND:  return "Run command";
+        case AI_ACTION_LIST_FILES:   return "List files";
+        case AI_ACTION_MULTI:        return "Multiple actions";
+        case AI_ACTION_NONE:
+        default:                     return "No action";
+    }
+}
+
+/* ========================================================================
  * Natural Language Command Parsing
  * ======================================================================== */
 
