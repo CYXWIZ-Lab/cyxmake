@@ -701,6 +701,24 @@ static bool execute_natural_language(ReplSession* session, const char* input) {
         printf("  Target: %s\n", cmd->target);
     }
 
+    /* Define confidence threshold - below this, route to AI if available */
+    const float AI_ROUTING_THRESHOLD = 0.6f;
+
+    /* Check if we should route to AI instead of local execution */
+    bool has_ai = (session->current_provider && ai_provider_is_ready(session->current_provider)) ||
+                  (session->llm && llm_is_ready(session->llm));
+    bool low_confidence = cmd->confidence < AI_ROUTING_THRESHOLD && cmd->confidence > 0;
+
+    if (has_ai && low_confidence && cmd->intent != INTENT_UNKNOWN) {
+        /* Route to AI for low confidence commands */
+        if (session->config.colors_enabled) {
+            printf("%sLow confidence - routing to AI...%s\n", COLOR_DIM, COLOR_RESET);
+        } else {
+            printf("Low confidence - routing to AI...\n");
+        }
+        cmd->intent = INTENT_UNKNOWN;  /* Force AI routing */
+    }
+
     /* Execute based on intent */
     switch (cmd->intent) {
         case INTENT_BUILD:

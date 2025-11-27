@@ -968,6 +968,37 @@ static char* extract_package_name(const char* input) {
     return result;
 }
 
+/* Check if input is a complex query that should go to AI */
+static bool is_complex_query(const char* input) {
+    if (!input) return false;
+
+    size_t len = strlen(input);
+
+    /* Long queries are likely complex */
+    if (len > 50) return true;
+
+    /* Multiple sentences or clauses */
+    int periods = 0, commas = 0, ands = 0;
+    for (const char* p = input; *p; p++) {
+        if (*p == '.') periods++;
+        if (*p == ',') commas++;
+    }
+    if (periods > 0 || commas > 1) return true;
+
+    /* Contains "and" or "then" suggesting multi-step */
+    if (contains_word(input, " and ") || contains_word(input, " then ")) return true;
+
+    /* Contains question-like patterns */
+    if (contains_word(input, "how do") || contains_word(input, "how can") ||
+        contains_word(input, "what should") || contains_word(input, "can you")) return true;
+
+    /* References to files with instructions */
+    if (contains_word(input, "follow") || contains_word(input, "according to") ||
+        contains_word(input, "based on") || contains_word(input, "instructions")) return true;
+
+    return false;
+}
+
 /* Parse a natural language command locally (fast, no AI) */
 ParsedCommand* parse_command_local(const char* input) {
     if (!input || strlen(input) == 0) return NULL;
@@ -977,6 +1008,20 @@ ParsedCommand* parse_command_local(const char* input) {
 
     cmd->intent = INTENT_UNKNOWN;
     cmd->confidence = 0.0;
+
+    /* Check for explicit AI routing prefix */
+    if (strncmp(input, "@ai ", 4) == 0 ||
+        strncmp(input, "ai:", 3) == 0 ||
+        strncmp(input, "ask:", 4) == 0 ||
+        strncmp(input, "ask ", 4) == 0) {
+        /* Force AI routing */
+        cmd->intent = INTENT_UNKNOWN;
+        cmd->confidence = 0.0;
+        return cmd;
+    }
+
+    /* Check if this is a complex query that needs AI */
+    bool complex = is_complex_query(input);
 
     /* Clean keywords - check before build since "clean up the build" should match clean */
     if (contains_word(input, "clean") ||
@@ -1068,6 +1113,11 @@ ParsedCommand* parse_command_local(const char* input) {
              contains_word(input, "usage")) {
         cmd->intent = INTENT_HELP;
         cmd->confidence = 0.9;
+    }
+
+    /* If query is complex, significantly reduce confidence to route to AI */
+    if (complex && cmd->confidence > 0) {
+        cmd->confidence *= 0.5;  /* Halve confidence for complex queries */
     }
 
     /* Store the full input as details */
