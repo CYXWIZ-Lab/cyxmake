@@ -12,6 +12,7 @@
 #include "cyxmake/file_ops.h"
 #include "cyxmake/tool_executor.h"
 #include "cyxmake/permission.h"
+#include "cyxmake/conversation_context.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -106,6 +107,9 @@ ReplSession* repl_session_create(const ReplConfig* config, Orchestrator* orch) {
         session->permissions->colors_enabled = session->config.colors_enabled;
     }
 
+    /* Initialize conversation context */
+    session->conversation = conversation_context_create(session->config.history_size);
+
     session->running = true;
     session->command_count = 0;
 
@@ -130,6 +134,9 @@ void repl_session_free(ReplSession* session) {
 
     /* Free permission context */
     permission_context_free(session->permissions);
+
+    /* Free conversation context */
+    conversation_context_free(session->conversation);
 
     /* Note: Don't free orchestrator - it may be shared */
 
@@ -227,8 +234,44 @@ static char* read_input_line(void) {
     return buffer;
 }
 
+/* Convert command intent to context intent */
+static ContextIntent intent_to_context(CommandIntent intent) {
+    switch (intent) {
+        case INTENT_BUILD:
+        case INTENT_CLEAN:
+        case INTENT_TEST:
+            return CTX_INTENT_BUILD;
+        case INTENT_INIT:
+        case INTENT_STATUS:
+            return CTX_INTENT_ANALYZE;
+        case INTENT_READ_FILE:
+        case INTENT_CREATE_FILE:
+            return CTX_INTENT_FILE_OP;
+        case INTENT_INSTALL:
+            return CTX_INTENT_INSTALL;
+        case INTENT_FIX:
+            return CTX_INTENT_FIX;
+        case INTENT_EXPLAIN:
+            return CTX_INTENT_EXPLAIN;
+        default:
+            return CTX_INTENT_OTHER;
+    }
+}
+
 /* Execute natural language command */
 static bool execute_natural_language(ReplSession* session, const char* input) {
+    /* Check for context references (e.g., "fix it", "show the file") */
+    char* resolved_target = NULL;
+    if (session->conversation) {
+        conversation_resolve_reference(session->conversation, input, &resolved_target);
+    }
+
+    /* Add user message to conversation */
+    if (session->conversation) {
+        conversation_add_message(session->conversation, MSG_ROLE_USER, input,
+                                  CTX_INTENT_OTHER, resolved_target, true);
+    }
+
     /* Parse the command locally first */
     ParsedCommand* cmd = parse_command_local(input);
 
@@ -306,15 +349,30 @@ static bool execute_natural_language(ReplSession* session, const char* input) {
                 if (file_exists(cmd->target)) {
                     printf("\n");
                     file_read_display(cmd->target, 50);
-                    /* Remember current file */
+                    /* Remember current file in session */
                     free(session->current_file);
                     session->current_file = strdup(cmd->target);
+                    /* Update conversation context */
+                    if (session->conversation) {
+                        conversation_set_file(session->conversation, cmd->target, NULL, 0);
+                        conversation_add_message(session->conversation, MSG_ROLE_ASSISTANT,
+                                                  "Displayed file content", CTX_INTENT_FILE_OP,
+                                                  cmd->target, true);
+                    }
                 } else {
                     if (session->config.colors_enabled) {
                         printf("%s%s File not found: %s%s\n", COLOR_RED, SYM_CROSS, cmd->target, COLOR_RESET);
                     } else {
                         printf("Error: File not found: %s\n", cmd->target);
                     }
+                }
+            } else if (resolved_target) {
+                /* Use resolved file from context */
+                if (file_exists(resolved_target)) {
+                    printf("\n");
+                    file_read_display(resolved_target, 50);
+                } else {
+                    printf("File not found: %s\n", resolved_target);
                 }
             } else {
                 printf("Please specify a file to read\n");
@@ -443,6 +501,7 @@ static bool execute_natural_language(ReplSession* session, const char* input) {
     }
 
     parsed_command_free(cmd);
+    free(resolved_target);
     return true;
 }
 

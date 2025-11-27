@@ -73,12 +73,13 @@ if(CYXMAKE_USE_SANITIZERS AND NOT MSVC)
     target_link_options(cyxmake_core PRIVATE -fsanitize=address,undefined)
 endif()
 
-# CLI sources (REPL, slash commands, permissions)
+# CLI sources (REPL, slash commands, permissions, context)
 set(CYXMAKE_CLI_SOURCES
     cli/main.c
     cli/repl.c
     cli/slash_commands.c
     cli/permission.c
+    cli/conversation_context.c
 )
 
 # Main executable

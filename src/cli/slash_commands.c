@@ -8,6 +8,7 @@
 #include "cyxmake/logger.h"
 #include "cyxmake/build_executor.h"
 #include "cyxmake/file_ops.h"
+#include "cyxmake/conversation_context.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,6 +53,7 @@ static const SlashCommand slash_commands[] = {
     {"config",  "cfg",  "Show configuration",           cmd_config},
     {"history", "hist", "Show command history",         cmd_history},
     {"version", "v",    "Show version info",            cmd_version},
+    {"context", "ctx",  "Show conversation context",    cmd_context},
     {NULL, NULL, NULL, NULL}
 };
 
@@ -559,6 +561,100 @@ bool cmd_version(ReplSession* session, const char* args) {
     } else {
         printf("\nCyxMake v%s\n", version);
         printf("AI-Powered Build Automation\n\n");
+    }
+
+    return true;
+}
+
+/* /context command */
+bool cmd_context(ReplSession* session, const char* args) {
+    (void)args;
+
+    if (!session->conversation) {
+        if (session->config.colors_enabled) {
+            printf("%sNo conversation context available%s\n", COLOR_DIM, COLOR_RESET);
+        } else {
+            printf("No conversation context available\n");
+        }
+        return true;
+    }
+
+    if (session->config.colors_enabled) {
+        printf("\n%s%sConversation Context%s\n\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
+
+        /* Messages count */
+        printf("%sMessages:%s %d\n", COLOR_YELLOW, COLOR_RESET,
+               session->conversation->message_count);
+
+        /* Current file */
+        const char* current_file = conversation_get_current_file(session->conversation);
+        if (current_file) {
+            printf("%sCurrent file:%s %s%s%s\n", COLOR_YELLOW, COLOR_RESET,
+                   COLOR_CYAN, current_file, COLOR_RESET);
+        } else {
+            printf("%sCurrent file:%s %s(none)%s\n", COLOR_YELLOW, COLOR_RESET,
+                   COLOR_DIM, COLOR_RESET);
+        }
+
+        /* Last error */
+        const char* last_error = conversation_get_last_error(session->conversation);
+        if (last_error) {
+            printf("%sLast error:%s %s%s%s\n", COLOR_YELLOW, COLOR_RESET,
+                   COLOR_RED, last_error, COLOR_RESET);
+        } else {
+            printf("%sLast error:%s %s(none)%s\n", COLOR_YELLOW, COLOR_RESET,
+                   COLOR_DIM, COLOR_RESET);
+        }
+
+        /* Recent messages */
+        printf("\n%sRecent activity:%s\n", COLOR_YELLOW, COLOR_RESET);
+        int start = session->conversation->message_count > 5 ?
+                    session->conversation->message_count - 5 : 0;
+        for (int i = start; i < session->conversation->message_count; i++) {
+            ConversationMessage* msg = &session->conversation->messages[i];
+            const char* role_color = msg->role == MSG_ROLE_USER ? COLOR_GREEN :
+                                     msg->role == MSG_ROLE_ASSISTANT ? COLOR_BLUE :
+                                     msg->role == MSG_ROLE_SYSTEM ? COLOR_YELLOW : COLOR_DIM;
+
+            /* Truncate long messages */
+            char preview[64];
+            strncpy(preview, msg->content, 56);
+            preview[56] = '\0';
+            if (strlen(msg->content) > 56) {
+                strcat(preview, "...");
+            }
+
+            printf("  %s[%s]%s %s\n", role_color,
+                   message_role_name(msg->role), COLOR_RESET, preview);
+        }
+
+        printf("\n");
+    } else {
+        printf("\nConversation Context\n\n");
+
+        printf("Messages: %d\n", session->conversation->message_count);
+
+        const char* current_file = conversation_get_current_file(session->conversation);
+        printf("Current file: %s\n", current_file ? current_file : "(none)");
+
+        const char* last_error = conversation_get_last_error(session->conversation);
+        printf("Last error: %s\n", last_error ? last_error : "(none)");
+
+        printf("\nRecent activity:\n");
+        int start = session->conversation->message_count > 5 ?
+                    session->conversation->message_count - 5 : 0;
+        for (int i = start; i < session->conversation->message_count; i++) {
+            ConversationMessage* msg = &session->conversation->messages[i];
+            char preview[64];
+            strncpy(preview, msg->content, 56);
+            preview[56] = '\0';
+            if (strlen(msg->content) > 56) {
+                strcat(preview, "...");
+            }
+            printf("  [%s] %s\n", message_role_name(msg->role), preview);
+        }
+
+        printf("\n");
     }
 
     return true;

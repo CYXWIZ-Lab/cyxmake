@@ -66,6 +66,7 @@ bool cmd_status(ReplSession* session, const char* args);
 bool cmd_config(ReplSession* session, const char* args);
 bool cmd_history(ReplSession* session, const char* args);
 bool cmd_version(ReplSession* session, const char* args);
+bool cmd_context(ReplSession* session, const char* args);
 
 #ifdef __cplusplus
 }

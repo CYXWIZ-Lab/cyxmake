@@ -16,6 +16,7 @@ extern "C" {
 typedef struct Orchestrator Orchestrator;
 typedef struct LLMContext LLMContext;
 typedef struct PermissionContext PermissionContext;
+typedef struct ConversationContext ConversationContext;
 
 /**
  * REPL configuration
@@ -35,7 +36,8 @@ typedef struct ReplSession {
     ReplConfig config;
     Orchestrator* orchestrator;
     LLMContext* llm;
-    PermissionContext* permissions;  /* Permission system */
+    PermissionContext* permissions;      /* Permission system */
+    ConversationContext* conversation;   /* Conversation context */
 
     /* Session state */
     bool running;
