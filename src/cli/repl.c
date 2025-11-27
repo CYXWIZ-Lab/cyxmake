@@ -967,75 +967,115 @@ static bool execute_natural_language(ReplSession* session, const char* input) {
 
         case INTENT_UNKNOWN:
         default:
-            /* If AI is available, use AI agent for complex requests */
-            if (session->llm && llm_is_ready(session->llm)) {
-                if (session->config.colors_enabled) {
-                    printf("%sAsking AI agent...%s\n", COLOR_DIM, COLOR_RESET);
-                } else {
-                    printf("Asking AI agent...\n");
+            /* Check if AI is available via new provider system or legacy LLM */
+            {
+                bool ai_available = false;
+
+                /* Check new multi-provider system first */
+                if (session->current_provider && ai_provider_is_ready(session->current_provider)) {
+                    ai_available = true;
+                }
+                /* Fall back to legacy LLM system */
+                else if (session->llm && llm_is_ready(session->llm)) {
+                    ai_available = true;
                 }
 
-                /* Get conversation context */
-                char* context_str = NULL;
-                const char* current_file = NULL;
-                const char* last_error = NULL;
-
-                if (session->conversation) {
-                    context_str = conversation_get_context_string(session->conversation, 5);
-                    current_file = conversation_get_current_file(session->conversation);
-                    last_error = conversation_get_last_error(session->conversation);
-                }
-
-                /* Generate AI agent prompt */
-                char* prompt = prompt_ai_agent(
-                    input,
-                    session->working_dir,
-                    current_file,
-                    last_error,
-                    context_str
-                );
-
-                if (prompt) {
-                    /* Query AI for response with actions */
-                    char* ai_response = llm_query_simple(session->llm, prompt, 1024);
-
-                    if (ai_response) {
-                        /* Parse the AI response */
-                        AIAgentResponse* agent_response = parse_ai_agent_response(ai_response);
-
-                        if (agent_response) {
-                            /* Execute the AI agent's actions */
-                            execute_ai_agent_response(session, agent_response);
-
-                            /* Add to conversation */
-                            if (session->conversation && agent_response->message) {
-                                conversation_add_message(session->conversation, MSG_ROLE_ASSISTANT,
-                                                          agent_response->message, CTX_INTENT_OTHER,
-                                                          NULL, true);
-                            }
-
-                            ai_agent_response_free(agent_response);
-                        } else {
-                            /* Couldn't parse response, show raw */
-                            printf("\n%s\n", ai_response);
-                        }
-                        free(ai_response);
+                if (ai_available) {
+                    if (session->config.colors_enabled) {
+                        printf("%sAsking AI agent...%s\n", COLOR_DIM, COLOR_RESET);
                     } else {
-                        printf("AI did not respond.\n");
+                        printf("Asking AI agent...\n");
                     }
-                    free(prompt);
-                }
-                free(context_str);
-            } else {
-                /* No AI available */
-                if (session->config.colors_enabled) {
-                    printf("%s%s I didn't understand that.%s\n",
-                           COLOR_YELLOW, SYM_WARN, COLOR_RESET);
-                    printf("%sLoad an AI model with '/ai load <model>' or try /help for commands.%s\n",
-                           COLOR_DIM, COLOR_RESET);
+
+                    /* Get conversation context */
+                    char* context_str = NULL;
+                    const char* current_file = NULL;
+                    const char* last_error = NULL;
+
+                    if (session->conversation) {
+                        context_str = conversation_get_context_string(session->conversation, 5);
+                        current_file = conversation_get_current_file(session->conversation);
+                        last_error = conversation_get_last_error(session->conversation);
+                    }
+
+                    /* Generate AI agent prompt */
+                    char* prompt = prompt_ai_agent(
+                        input,
+                        session->working_dir,
+                        current_file,
+                        last_error,
+                        context_str
+                    );
+
+                    if (prompt) {
+                        char* ai_response = NULL;
+
+                        /* Use new provider system if available */
+                        if (session->current_provider && ai_provider_is_ready(session->current_provider)) {
+                            /* Build message array */
+                            AIMessage msg = {0};
+                            msg.role = AI_ROLE_USER;
+                            msg.content = prompt;
+
+                            AIRequest req = {0};
+                            req.messages = &msg;
+                            req.message_count = 1;
+                            req.max_tokens = 1024;
+                            req.temperature = 0.7f;
+
+                            AIResponse* resp = ai_provider_complete(session->current_provider, &req);
+                            if (resp) {
+                                if (resp->success && resp->content) {
+                                    ai_response = strdup(resp->content);
+                                } else if (resp->error) {
+                                    printf("%sAI Error: %s%s\n", COLOR_RED, resp->error, COLOR_RESET);
+                                }
+                            }
+                            ai_response_free(resp);
+                        }
+                        /* Fall back to legacy LLM */
+                        else if (session->llm) {
+                            ai_response = llm_query_simple(session->llm, prompt, 1024);
+                        }
+
+                        if (ai_response) {
+                            /* Parse the AI response */
+                            AIAgentResponse* agent_response = parse_ai_agent_response(ai_response);
+
+                            if (agent_response) {
+                                /* Execute the AI agent's actions */
+                                execute_ai_agent_response(session, agent_response);
+
+                                /* Add to conversation */
+                                if (session->conversation && agent_response->message) {
+                                    conversation_add_message(session->conversation, MSG_ROLE_ASSISTANT,
+                                                              agent_response->message, CTX_INTENT_OTHER,
+                                                              NULL, true);
+                                }
+
+                                ai_agent_response_free(agent_response);
+                            } else {
+                                /* Couldn't parse response, show raw */
+                                printf("\n%s\n", ai_response);
+                            }
+                            free(ai_response);
+                        } else {
+                            printf("AI did not respond.\n");
+                        }
+                        free(prompt);
+                    }
+                    free(context_str);
                 } else {
-                    printf("I didn't understand that.\n");
-                    printf("Load an AI model with '/ai load <model>' or try /help for commands.\n");
+                    /* No AI available */
+                    if (session->config.colors_enabled) {
+                        printf("%s%s I didn't understand that.%s\n",
+                               COLOR_YELLOW, SYM_WARN, COLOR_RESET);
+                        printf("%sLoad an AI model with '/ai load <model>' or try /help for commands.%s\n",
+                               COLOR_DIM, COLOR_RESET);
+                    } else {
+                        printf("I didn't understand that.\n");
+                        printf("Load an AI model with '/ai load <model>' or try /help for commands.\n");
+                    }
                 }
             }
             break;
