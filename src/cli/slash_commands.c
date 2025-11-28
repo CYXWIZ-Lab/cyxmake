@@ -25,6 +25,7 @@
 #define CLEAR_CMD "cls"
 #else
 #include <unistd.h>
+#include <sys/wait.h>
 #define CLEAR_CMD "clear"
 #endif
 
@@ -44,6 +45,7 @@
 #define SYM_CROSS   "[X]"
 #define SYM_BULLET  "*"
 #define SYM_WARN    "[!]"
+#define SYM_ARROW   "->"
 
 /* Slash command definitions */
 static const SlashCommand slash_commands[] = {
@@ -277,6 +279,181 @@ bool cmd_init(ReplSession* session, const char* args) {
     return true;
 }
 
+/* Execute a command and capture output */
+static char* execute_and_capture(const char* command, int* exit_code) {
+    char* output = malloc(1024 * 1024);  /* 1MB buffer */
+    if (!output) {
+        *exit_code = -1;
+        return NULL;
+    }
+    output[0] = '\0';
+
+#ifdef _WIN32
+    char cmd_with_redirect[2048];
+    snprintf(cmd_with_redirect, sizeof(cmd_with_redirect), "%s 2>&1", command);
+    FILE* pipe = _popen(cmd_with_redirect, "r");
+#else
+    char cmd_with_redirect[2048];
+    snprintf(cmd_with_redirect, sizeof(cmd_with_redirect), "%s 2>&1", command);
+    FILE* pipe = popen(cmd_with_redirect, "r");
+#endif
+
+    if (!pipe) {
+        *exit_code = -1;
+        free(output);
+        return NULL;
+    }
+
+    size_t offset = 0;
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe) != NULL && offset < 1024 * 1024 - 1) {
+        size_t len = strlen(buffer);
+        if (offset + len < 1024 * 1024) {
+            memcpy(output + offset, buffer, len);
+            offset += len;
+            /* Print output in real-time */
+            printf("%s", buffer);
+        }
+    }
+    output[offset] = '\0';
+
+#ifdef _WIN32
+    *exit_code = _pclose(pipe);
+#else
+    int status = pclose(pipe);
+    *exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+#endif
+
+    return output;
+}
+
+/* Try to automatically fix CMake version errors */
+static bool try_fix_cmake_version(const char* build_output, bool colors_enabled) {
+    /* Check if this is a CMake version compatibility error */
+    if (!strstr(build_output, "Compatibility with CMake <") &&
+        !strstr(build_output, "cmake_minimum_required")) {
+        return false;
+    }
+
+    if (colors_enabled) {
+        printf("\n%s%s%s Detected CMake version compatibility error\n",
+               COLOR_YELLOW, SYM_ARROW, COLOR_RESET);
+        printf("  %s%s%s Auto-fixing cmake_minimum_required version...\n",
+               COLOR_BLUE, SYM_BULLET, COLOR_RESET);
+    } else {
+        printf("\nDetected CMake version compatibility error\n");
+        printf("Auto-fixing cmake_minimum_required version...\n");
+    }
+
+    /* Read CMakeLists.txt */
+    FILE* file = fopen("CMakeLists.txt", "r");
+    if (!file) {
+        if (colors_enabled) {
+            printf("  %s%s Could not open CMakeLists.txt%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+        }
+        return false;
+    }
+
+    fseek(file, 0, SEEK_END);
+    long file_size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    char* content = malloc(file_size + 1);
+    if (!content) {
+        fclose(file);
+        return false;
+    }
+
+    size_t bytes_read = fread(content, 1, file_size, file);
+    fclose(file);
+    content[bytes_read] = '\0';
+
+    /* Find cmake_minimum_required and VERSION */
+    char* cmake_req = strstr(content, "cmake_minimum_required");
+    if (!cmake_req) {
+        free(content);
+        return false;
+    }
+
+    char* version_start = strstr(cmake_req, "VERSION");
+    if (!version_start) {
+        version_start = strstr(cmake_req, "version");
+    }
+
+    if (!version_start) {
+        free(content);
+        return false;
+    }
+
+    /* Skip "VERSION" and whitespace */
+    version_start += strlen("VERSION");
+    while (*version_start && (*version_start == ' ' || *version_start == '\t')) {
+        version_start++;
+    }
+
+    /* Find end of version number */
+    char* version_end = version_start;
+    while (*version_end && *version_end != ')' && *version_end != ' ' &&
+           *version_end != '\t' && *version_end != '\n' && *version_end != '\r') {
+        version_end++;
+    }
+
+    /* Extract old version for logging */
+    size_t old_version_len = version_end - version_start;
+    char old_version[32] = {0};
+    if (old_version_len < sizeof(old_version)) {
+        memcpy(old_version, version_start, old_version_len);
+    }
+
+    const char* new_version = "3.10";
+
+    if (colors_enabled) {
+        printf("  %s%s%s Updating VERSION %s -> %s\n",
+               COLOR_BLUE, SYM_BULLET, COLOR_RESET, old_version, new_version);
+    } else {
+        printf("  Updating VERSION %s -> %s\n", old_version, new_version);
+    }
+
+    /* Build new content */
+    size_t prefix_len = version_start - content;
+    size_t suffix_len = bytes_read - (version_end - content);
+    size_t new_version_len = strlen(new_version);
+    size_t new_size = prefix_len + new_version_len + suffix_len + 1;
+
+    char* new_content = malloc(new_size);
+    if (!new_content) {
+        free(content);
+        return false;
+    }
+
+    memcpy(new_content, content, prefix_len);
+    memcpy(new_content + prefix_len, new_version, new_version_len);
+    memcpy(new_content + prefix_len + new_version_len, version_end, suffix_len);
+    new_content[prefix_len + new_version_len + suffix_len] = '\0';
+
+    free(content);
+
+    /* Write back to file */
+    file = fopen("CMakeLists.txt", "w");
+    if (!file) {
+        free(new_content);
+        return false;
+    }
+
+    fputs(new_content, file);
+    fclose(file);
+    free(new_content);
+
+    if (colors_enabled) {
+        printf("  %s%s CMakeLists.txt updated successfully%s\n",
+               COLOR_GREEN, SYM_CHECK, COLOR_RESET);
+    } else {
+        printf("  CMakeLists.txt updated successfully\n");
+    }
+
+    return true;
+}
+
 /* /build command */
 bool cmd_build(ReplSession* session, const char* args) {
     (void)args;
@@ -289,29 +466,55 @@ bool cmd_build(ReplSession* session, const char* args) {
 
     /* Detect build system and run appropriate command */
     int result = -1;
+    char* build_output = NULL;
+    int max_retries = 3;
+    int retry_count = 0;
 
     if (file_exists("CMakeLists.txt")) {
-        /* CMake project */
-        if (!file_exists("build")) {
-            if (session->config.colors_enabled) {
-                printf("  %s%s%s Configuring CMake...\n", COLOR_BLUE, SYM_BULLET, COLOR_RESET);
-            }
-#ifdef _WIN32
-            result = system("cmake -B build -S .");
-#else
-            result = system("cmake -B build -S . 2>&1");
-#endif
-        }
+        /* CMake project - with error recovery */
+        while (retry_count < max_retries) {
+            /* Configure step */
+            if (!file_exists("build/CMakeCache.txt")) {
+                if (session->config.colors_enabled) {
+                    printf("  %s%s%s Configuring CMake...\n", COLOR_BLUE, SYM_BULLET, COLOR_RESET);
+                } else {
+                    printf("  Configuring CMake...\n");
+                }
 
-        if (result == 0 || file_exists("build")) {
-            if (session->config.colors_enabled) {
-                printf("  %s%s%s Compiling...\n", COLOR_BLUE, SYM_BULLET, COLOR_RESET);
+                free(build_output);
+                build_output = execute_and_capture("cmake -B build -S .", &result);
+
+                /* Check for errors and try to fix */
+                if (result != 0 && build_output) {
+                    if (try_fix_cmake_version(build_output, session->config.colors_enabled)) {
+                        /* Clean old build artifacts and retry */
+                        dir_delete_recursive("build");
+                        retry_count++;
+                        if (session->config.colors_enabled) {
+                            printf("\n%s%s%s Retrying build (attempt %d/%d)...\n",
+                                   COLOR_YELLOW, SYM_ARROW, COLOR_RESET, retry_count + 1, max_retries);
+                        } else {
+                            printf("\nRetrying build (attempt %d/%d)...\n", retry_count + 1, max_retries);
+                        }
+                        continue;
+                    }
+                    break;  /* Unknown error, stop retrying */
+                }
             }
-#ifdef _WIN32
-            result = system("cmake --build build");
-#else
-            result = system("cmake --build build 2>&1");
-#endif
+
+            /* Build step */
+            if (result == 0 || file_exists("build")) {
+                if (session->config.colors_enabled) {
+                    printf("  %s%s%s Compiling...\n", COLOR_BLUE, SYM_BULLET, COLOR_RESET);
+                } else {
+                    printf("  Compiling...\n");
+                }
+
+                free(build_output);
+                build_output = execute_and_capture("cmake --build build", &result);
+            }
+
+            break;  /* Success or unrecoverable error */
         }
     } else if (file_exists("Makefile")) {
         /* Make project */
@@ -356,9 +559,10 @@ bool cmd_build(ReplSession* session, const char* args) {
 
         /* Store last error for potential "fix" commands */
         free(session->last_error);
-        session->last_error = strdup("Build failed");
+        session->last_error = build_output ? strdup(build_output) : strdup("Build failed");
     }
 
+    free(build_output);
     return true;
 }
 

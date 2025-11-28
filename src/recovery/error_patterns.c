@@ -97,6 +97,17 @@ static const char* version_mismatch_patterns[] = {
     NULL
 };
 
+/* Pattern definitions for CMake version compatibility errors */
+static const char* cmake_version_patterns[] = {
+    "Compatibility with CMake < ",
+    "cmake_minimum_required",
+    "Update the VERSION argument",
+    "CMake.*version.*too old",
+    "CMake.*does not support",
+    "requires CMake",
+    NULL
+};
+
 /* Pattern definitions for network errors */
 static const char* network_error_patterns[] = {
     "Connection refused",
@@ -182,6 +193,14 @@ static ErrorPattern pattern_database[] = {
         .pattern_count = 5,
         .description = "Incompatible version of a dependency",
         .priority = 6
+    },
+    {
+        .type = ERROR_PATTERN_CMAKE_VERSION,
+        .name = "CMake Version Compatibility",
+        .patterns = cmake_version_patterns,
+        .pattern_count = 6,
+        .description = "CMake minimum version needs to be updated",
+        .priority = 10  /* High priority - easily fixable */
     },
     {
         .type = ERROR_PATTERN_NETWORK_ERROR,
@@ -445,6 +464,31 @@ char* extract_error_detail(const char* error_output, ErrorPatternType type) {
                         detail = strdup(buffer);
                         break;
                     }
+                }
+            }
+            break;
+        }
+
+        case ERROR_PATTERN_CMAKE_VERSION: {
+            /* Try to extract the minimum required version from error message */
+            /* Pattern: "Compatibility with CMake < X.Y has been removed" */
+            const char* p = strstr(error_output, "Compatibility with CMake < ");
+            if (p) {
+                p += strlen("Compatibility with CMake < ");
+                const char* end = p;
+                while (*end && *end != ' ' && *end != '\n' && *end != '\r') end++;
+                size_t len = end - p;
+                if (len > 0 && len < sizeof(buffer)) {
+                    memcpy(buffer, p, len);
+                    buffer[len] = '\0';
+                    detail = strdup(buffer);
+                }
+            } else {
+                /* Try to extract from cmake_minimum_required line */
+                p = strstr(error_output, "CMakeLists.txt:");
+                if (p) {
+                    /* Just return the filename for now */
+                    detail = strdup("CMakeLists.txt");
                 }
             }
             break;

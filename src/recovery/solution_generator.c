@@ -525,6 +525,55 @@ static FixAction** generate_disk_full_fixes(const ProjectContext* ctx,
     return fixes;
 }
 
+/* Generate fix actions for CMake version compatibility */
+static FixAction** generate_cmake_version_fixes(const char* min_version,
+                                                 const ProjectContext* ctx,
+                                                 size_t* fix_count) {
+    (void)ctx;  /* May use for project path in future */
+
+    FixAction** fixes = calloc(2, sizeof(FixAction*));
+    if (!fixes) {
+        *fix_count = 0;
+        return NULL;
+    }
+
+    int count = 0;
+
+    /* Determine the target version - use at least 3.10 for compatibility */
+    const char* target_version = "3.10";
+    if (min_version && strcmp(min_version, "3.5") == 0) {
+        target_version = "3.10";  /* If CMake says < 3.5, use 3.10 */
+    }
+
+    /* Fix 1: Update cmake_minimum_required in CMakeLists.txt */
+    char desc[256];
+    snprintf(desc, sizeof(desc),
+             "Update cmake_minimum_required to VERSION %s in CMakeLists.txt",
+             target_version);
+
+    fixes[count++] = create_fix_action(
+        FIX_ACTION_FIX_CMAKE_VERSION,
+        desc,
+        NULL,                    /* No shell command needed */
+        "CMakeLists.txt",        /* Target file */
+        (char*)target_version,   /* New version to set */
+        false                    /* Auto-apply - safe operation */
+    );
+
+    /* Fix 2: Retry build after fix */
+    fixes[count++] = create_fix_action(
+        FIX_ACTION_RETRY,
+        "Retry build after CMake version fix",
+        NULL,
+        NULL,
+        NULL,
+        false
+    );
+
+    *fix_count = count;
+    return fixes;
+}
+
 /* Main solution generation function */
 FixAction** solution_generate(ErrorPatternType pattern_type,
                               const char* error_details,
@@ -537,6 +586,9 @@ FixAction** solution_generate(ErrorPatternType pattern_type,
               pattern_type, error_details ? error_details : "none");
 
     switch (pattern_type) {
+        case ERROR_PATTERN_CMAKE_VERSION:
+            return generate_cmake_version_fixes(error_details, ctx, fix_count);
+
         case ERROR_PATTERN_MISSING_LIBRARY:
             return generate_missing_library_fixes(error_details, ctx, fix_count);
 

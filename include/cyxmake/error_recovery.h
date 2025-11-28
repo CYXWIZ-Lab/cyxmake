@@ -28,6 +28,7 @@ typedef enum {
     ERROR_PATTERN_SYNTAX_ERROR,
     ERROR_PATTERN_UNDEFINED_REFERENCE,
     ERROR_PATTERN_VERSION_MISMATCH,
+    ERROR_PATTERN_CMAKE_VERSION,          /* CMake minimum version compatibility */
     ERROR_PATTERN_NETWORK_ERROR,
     ERROR_PATTERN_TIMEOUT,
     ERROR_PATTERN_UNKNOWN
@@ -43,6 +44,7 @@ typedef enum {
     FIX_ACTION_SET_ENV_VAR,
     FIX_ACTION_RUN_COMMAND,
     FIX_ACTION_CLEAN_BUILD,
+    FIX_ACTION_FIX_CMAKE_VERSION,         /* Fix cmake_minimum_required version */
     FIX_ACTION_RETRY,
     FIX_ACTION_NONE
 } FixActionType;

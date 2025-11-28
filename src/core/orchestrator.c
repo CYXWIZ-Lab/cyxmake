@@ -49,7 +49,7 @@ Orchestrator* cyxmake_init(const char* config_path) {
         .backoff_multiplier = 2.0f,
         .max_delay_ms = 30000,
         .use_ai_analysis = true,
-        .auto_apply_fixes = false
+        .auto_apply_fixes = true  /* Auto-apply safe fixes like CMake version updates */
     };
 
     /* Initialize tool registry and discover tools */

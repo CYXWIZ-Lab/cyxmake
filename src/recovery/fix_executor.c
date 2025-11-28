@@ -72,6 +72,136 @@ static bool append_to_file(const char* path, const char* content) {
     return true;
 }
 
+/* Fix cmake_minimum_required version in CMakeLists.txt */
+static bool fix_cmake_version(const char* cmake_path, const char* new_version) {
+    if (!cmake_path || !new_version) return false;
+
+    log_info("Fixing cmake_minimum_required version in: %s", cmake_path);
+
+    /* Read the file content */
+    FILE* file = fopen(cmake_path, "r");
+    if (!file) {
+        log_error("Failed to open file: %s", cmake_path);
+        return false;
+    }
+
+    /* Get file size */
+    fseek(file, 0, SEEK_END);
+    long file_size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    if (file_size <= 0 || file_size > 1024 * 1024) {  /* Max 1MB */
+        log_error("Invalid file size: %ld", file_size);
+        fclose(file);
+        return false;
+    }
+
+    /* Read file content */
+    char* content = malloc(file_size + 1);
+    if (!content) {
+        log_error("Failed to allocate memory");
+        fclose(file);
+        return false;
+    }
+
+    size_t bytes_read = fread(content, 1, file_size, file);
+    fclose(file);
+    content[bytes_read] = '\0';
+
+    /* Find cmake_minimum_required line */
+    char* cmake_req = strstr(content, "cmake_minimum_required");
+    if (!cmake_req) {
+        /* Try case-insensitive */
+        char* lower_content = strdup(content);
+        if (lower_content) {
+            for (char* p = lower_content; *p; p++) {
+                *p = tolower((unsigned char)*p);
+            }
+            char* offset_ptr = strstr(lower_content, "cmake_minimum_required");
+            if (offset_ptr) {
+                cmake_req = content + (offset_ptr - lower_content);
+            }
+            free(lower_content);
+        }
+    }
+
+    if (!cmake_req) {
+        log_error("Could not find cmake_minimum_required in file");
+        free(content);
+        return false;
+    }
+
+    /* Find VERSION keyword */
+    char* version_start = strstr(cmake_req, "VERSION");
+    if (!version_start) {
+        version_start = strstr(cmake_req, "version");
+    }
+
+    if (!version_start) {
+        log_error("Could not find VERSION keyword");
+        free(content);
+        return false;
+    }
+
+    /* Skip "VERSION" and whitespace */
+    version_start += strlen("VERSION");
+    while (*version_start && (*version_start == ' ' || *version_start == '\t')) {
+        version_start++;
+    }
+
+    /* Find end of version number */
+    char* version_end = version_start;
+    while (*version_end && *version_end != ')' && *version_end != ' ' &&
+           *version_end != '\t' && *version_end != '\n' && *version_end != '\r') {
+        version_end++;
+    }
+
+    /* Extract old version for logging */
+    size_t old_version_len = version_end - version_start;
+    char old_version[32] = {0};
+    if (old_version_len < sizeof(old_version)) {
+        memcpy(old_version, version_start, old_version_len);
+    }
+
+    log_info("Changing cmake_minimum_required VERSION from %s to %s",
+             old_version, new_version);
+
+    /* Build new content */
+    size_t prefix_len = version_start - content;
+    size_t suffix_len = bytes_read - (version_end - content);
+    size_t new_version_len = strlen(new_version);
+    size_t new_size = prefix_len + new_version_len + suffix_len + 1;
+
+    char* new_content = malloc(new_size);
+    if (!new_content) {
+        log_error("Failed to allocate memory for new content");
+        free(content);
+        return false;
+    }
+
+    memcpy(new_content, content, prefix_len);
+    memcpy(new_content + prefix_len, new_version, new_version_len);
+    memcpy(new_content + prefix_len + new_version_len, version_end, suffix_len);
+    new_content[prefix_len + new_version_len + suffix_len] = '\0';
+
+    free(content);
+
+    /* Write back to file */
+    file = fopen(cmake_path, "w");
+    if (!file) {
+        log_error("Failed to open file for writing: %s", cmake_path);
+        free(new_content);
+        return false;
+    }
+
+    fputs(new_content, file);
+    fclose(file);
+    free(new_content);
+
+    log_success("Updated cmake_minimum_required to VERSION %s", new_version);
+    return true;
+}
+
 /* Check if file exists */
 static bool file_exists(const char* path) {
     FILE* file = fopen(path, "r");
@@ -276,6 +406,16 @@ static bool fix_execute_internal(const FixAction* action,
 
         case FIX_ACTION_CLEAN_BUILD:
             success = clean_build(ctx);
+            break;
+
+        case FIX_ACTION_FIX_CMAKE_VERSION:
+            /* Fix CMake minimum version in CMakeLists.txt */
+            if (action->target && action->value) {
+                success = fix_cmake_version(action->target, action->value);
+            } else {
+                log_error("Missing target file or version for CMake fix");
+                success = false;
+            }
             break;
 
         case FIX_ACTION_RETRY:
