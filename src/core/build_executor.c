@@ -352,6 +352,38 @@ BuildResult* build_execute(const ProjectContext* ctx, const BuildOptions* opts) 
         build_dir = build_find_directory(ctx->root_path, ctx->build_system.type);
         if (build_dir) {
             log_debug("Using build directory: %s", build_dir);
+        } else if (ctx->build_system.type == BUILD_CMAKE) {
+            /* CMake project not configured - run cmake configure first */
+            log_info("CMake project not configured, running cmake configure...");
+            char configure_cmd[1024];
+            /* Add CMAKE_POLICY_VERSION_MINIMUM for compatibility with older CMakeLists.txt */
+            snprintf(configure_cmd, sizeof(configure_cmd),
+                     "cmake -B build -S \"%s\" -DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+                     ctx->root_path);
+
+            BuildResult* config_result = build_execute_command(configure_cmd, ctx->root_path);
+            if (!config_result || !config_result->success) {
+                log_error("Failed to configure CMake project");
+                if (config_result) {
+                    if (config_result->stdout_output && config_result->stdout_output[0]) {
+                        log_plain("%s", config_result->stdout_output);
+                    }
+                    build_result_free(config_result);
+                }
+                if (default_opts) build_options_free(default_opts);
+                return NULL;
+            }
+            log_success("CMake project configured successfully");
+            if (config_result->stdout_output && config_result->stdout_output[0]) {
+                log_debug("Configure output:\n%s", config_result->stdout_output);
+            }
+            build_result_free(config_result);
+
+            /* Now use the build directory */
+            build_dir = malloc(512);
+            if (build_dir) {
+                snprintf(build_dir, 512, "%s/build", ctx->root_path);
+            }
         }
     }
 
@@ -451,7 +483,7 @@ char* build_find_directory(const char* project_path, BuildSystem build_system) {
     /* Check build-system-specific directories */
     switch (build_system) {
         case BUILD_CMAKE: {
-            /* Look for CMakeCache.txt */
+            /* Look for CMakeCache.txt in common build directories */
             for (const char** dir = common_dirs; *dir; dir++) {
                 snprintf(build_dir, 512, "%s/%s/CMakeCache.txt", project_path, *dir);
                 if (access(build_dir, F_OK) == 0) {
@@ -459,8 +491,21 @@ char* build_find_directory(const char* project_path, BuildSystem build_system) {
                     return build_dir;
                 }
             }
-            /* Default to "build" */
-            snprintf(build_dir, 512, "%s/build", project_path);
+            /* Check if CMakeLists.txt exists in project root (in-source build possible) */
+            snprintf(build_dir, 512, "%s/CMakeLists.txt", project_path);
+            if (access(build_dir, F_OK) == 0) {
+                /* Check if CMakeCache.txt exists in project root (in-source build) */
+                snprintf(build_dir, 512, "%s/CMakeCache.txt", project_path);
+                if (access(build_dir, F_OK) == 0) {
+                    snprintf(build_dir, 512, "%s", project_path);
+                    return build_dir;
+                }
+                /* No configured build found - return NULL to signal need for configure */
+                free(build_dir);
+                return NULL;
+            }
+            /* Default to project path */
+            snprintf(build_dir, 512, "%s", project_path);
             return build_dir;
         }
 

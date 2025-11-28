@@ -9,7 +9,9 @@
 #include "cyxmake/build_executor.h"
 #include "cyxmake/error_recovery.h"
 #include "cyxmake/llm_interface.h"
+#include "cyxmake/ai_provider.h"
 #include "cyxmake/tool_executor.h"
+#include "cyxmake/ai_build_agent.h"
 #include "cyxmake/logger.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -19,6 +21,8 @@
 struct Orchestrator {
     Config* config;
     LLMContext* llm;
+    AIProviderRegistry* ai_registry;
+    AIProvider* default_ai;
     ToolRegistry* tool_registry;
     ProjectContext* current_project;
     RecoveryStrategy recovery_strategy;
@@ -67,44 +71,75 @@ Orchestrator* cyxmake_init(const char* config_path) {
         }
     }
 
-    /* Initialize LLM for AI-powered features */
+    /* Initialize AI provider from config */
     log_info("Initializing AI engine...");
-    char* model_path = llm_get_default_model_path();
 
-    if (model_path && llm_validate_model_file(model_path)) {
-        LLMConfig* llm_config = llm_config_default();
-        llm_config->model_path = model_path;
-        llm_config->n_ctx = 4096;       /* Context for error analysis */
-        llm_config->verbose = false;
+    /* Try to load AI providers from config file (cyxmake.toml) */
+    orch->ai_registry = ai_registry_create();
+    if (orch->ai_registry) {
+        int providers_loaded = ai_registry_load_config(orch->ai_registry, config_path);
+        if (providers_loaded > 0) {
+            log_info("Loaded %d AI provider(s) from config", providers_loaded);
 
-        orch->llm = llm_init(llm_config);
+            /* Get the default provider */
+            orch->default_ai = ai_registry_get_default(orch->ai_registry);
+            if (orch->default_ai) {
+                /* Initialize the provider */
+                if (ai_provider_init(orch->default_ai)) {
+                    if (ai_provider_is_ready(orch->default_ai)) {
+                        log_success("AI engine ready (provider: %s)",
+                                   orch->default_ai->config.name ? orch->default_ai->config.name : "default");
+                        orch->ai_enabled = true;
+                    }
+                }
 
-        if (orch->llm && llm_is_ready(orch->llm)) {
-            log_success("AI engine ready");
-            orch->ai_enabled = true;
-
-            /* Get model info */
-            LLMModelInfo* info = llm_get_model_info(orch->llm);
-            if (info) {
-                log_debug("Model: %s (%s)", info->model_name, info->model_type);
-                llm_model_info_free(info);
+                if (!orch->ai_enabled) {
+                    log_warning("Default AI provider not ready: %s",
+                               ai_provider_error(orch->default_ai) ? ai_provider_error(orch->default_ai) : "unknown error");
+                }
             }
+        }
+    }
+
+    /* Fallback to local llama.cpp if no provider configured */
+    if (!orch->ai_enabled) {
+        char* model_path = llm_get_default_model_path();
+
+        if (model_path && llm_validate_model_file(model_path)) {
+            LLMConfig* llm_config = llm_config_default();
+            llm_config->model_path = model_path;
+            llm_config->n_ctx = 4096;       /* Context for error analysis */
+            llm_config->verbose = false;
+
+            orch->llm = llm_init(llm_config);
+
+            if (orch->llm && llm_is_ready(orch->llm)) {
+                log_success("AI engine ready (local llama.cpp)");
+                orch->ai_enabled = true;
+
+                /* Get model info */
+                LLMModelInfo* info = llm_get_model_info(orch->llm);
+                if (info) {
+                    log_debug("Model: %s (%s)", info->model_name, info->model_type);
+                    llm_model_info_free(info);
+                }
+            } else {
+                log_warning("AI engine failed to initialize - continuing without AI");
+                orch->ai_enabled = false;
+                orch->recovery_strategy.use_ai_analysis = false;
+            }
+
+            llm_config_free(llm_config);
         } else {
-            log_warning("AI engine failed to initialize - continuing without AI");
+            log_info("No AI model found - running in tool-only mode");
+            log_info("To enable AI: configure in cyxmake.toml or download model to ~/.cyxmake/models/");
             orch->ai_enabled = false;
             orch->recovery_strategy.use_ai_analysis = false;
         }
 
-        llm_config_free(llm_config);
-    } else {
-        log_info("No AI model found - running in tool-only mode");
-        log_info("To enable AI: download model to ~/.cyxmake/models/");
-        orch->ai_enabled = false;
-        orch->recovery_strategy.use_ai_analysis = false;
-    }
-
-    if (model_path) {
-        free(model_path);
+        if (model_path) {
+            free(model_path);
+        }
     }
 
     log_plain("\n");
@@ -129,6 +164,14 @@ void cyxmake_shutdown(Orchestrator* orch) {
         log_debug("Shutting down AI engine...");
         llm_shutdown(orch->llm);
         orch->llm = NULL;
+    }
+
+    /* Free AI provider registry */
+    if (orch->ai_registry) {
+        log_debug("Freeing AI provider registry...");
+        ai_registry_free(orch->ai_registry);
+        orch->ai_registry = NULL;
+        orch->default_ai = NULL;  /* Freed by registry */
     }
 
     /* Free tool registry */
@@ -293,4 +336,94 @@ CyxMakeError cyxmake_create_project(Orchestrator* orch,
 void cyxmake_set_log_level(LogLevel level) {
     // TODO: Implement logging
     printf("Setting log level to: %d\n", level);
+}
+
+/* ========================================================================
+ * AI-First Autonomous Build
+ * ======================================================================== */
+
+CyxMakeError cyxmake_build_autonomous(Orchestrator* orch, const char* project_path) {
+    if (!orch || !project_path) {
+        return CYXMAKE_ERROR_INVALID_ARG;
+    }
+
+    /* Check if AI is available */
+    if (!orch->ai_enabled) {
+        log_error("Autonomous build requires AI engine");
+        log_info("Please configure AI provider in cyxmake.toml or install model at ~/.cyxmake/models/");
+        return CYXMAKE_ERROR_INTERNAL;
+    }
+
+    /* Get the AI provider to use */
+    AIProvider* ai = orch->default_ai;
+    if (!ai && orch->llm) {
+        /* Create a wrapper provider for llama.cpp if no custom provider */
+        log_warning("No AIProvider configured, falling back to local llama.cpp");
+        log_error("Autonomous build requires AIProvider (custom providers in cyxmake.toml)");
+        return CYXMAKE_ERROR_INTERNAL;
+    }
+
+    if (!ai) {
+        log_error("No AI provider available");
+        return CYXMAKE_ERROR_INTERNAL;
+    }
+
+    log_info("Starting AI-powered autonomous build...");
+    log_info("Project: %s", project_path);
+    log_info("Using AI provider: %s", ai->config.name ? ai->config.name : "default");
+    log_plain("");
+
+    /* Create AI Build Agent */
+    AIBuildAgentConfig config = ai_build_agent_config_default();
+    config.verbose = true;
+    config.auto_install_deps = true;
+    config.allow_commands = true;
+
+    AIBuildAgent* agent = ai_build_agent_create(ai, orch->tool_registry, &config);
+    if (!agent) {
+        log_error("Failed to create AI Build Agent");
+        return CYXMAKE_ERROR_INTERNAL;
+    }
+
+    /* Run autonomous build */
+    BuildResult* result = ai_build_agent_build(agent, project_path);
+
+    /* Cleanup agent */
+    ai_build_agent_free(agent);
+
+    if (!result) {
+        log_error("Autonomous build returned no result");
+        return CYXMAKE_ERROR_BUILD;
+    }
+
+    /* Show result */
+    log_plain("");
+    if (result->success) {
+        log_success("Autonomous build completed successfully!");
+    } else {
+        log_error("Autonomous build failed");
+        if (result->stderr_output && strlen(result->stderr_output) > 0) {
+            log_plain("Last error: %s", result->stderr_output);
+        }
+    }
+
+    CyxMakeError err = result->success ? CYXMAKE_SUCCESS : CYXMAKE_ERROR_BUILD;
+
+    build_result_free(result);
+    return err;
+}
+
+/* Get the LLM context from orchestrator (for REPL/CLI) */
+LLMContext* cyxmake_get_llm(Orchestrator* orch) {
+    return orch ? orch->llm : NULL;
+}
+
+/* Get the tool registry from orchestrator */
+ToolRegistry* cyxmake_get_tools(Orchestrator* orch) {
+    return orch ? orch->tool_registry : NULL;
+}
+
+/* Check if AI is enabled */
+bool cyxmake_ai_enabled(Orchestrator* orch) {
+    return orch ? orch->ai_enabled : false;
 }

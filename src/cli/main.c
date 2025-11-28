@@ -29,6 +29,7 @@ static void print_help(const char* program_name) {
     log_plain("Commands:\n");
     log_plain("  init              Initialize project (analyze and create cache)\n");
     log_plain("  build             Build the project with AI error recovery\n");
+    log_plain("  auto              AI-first autonomous build (AI plans & executes)\n");
     log_plain("  create            Create new project from natural language\n");
     log_plain("  doctor            Check project health\n");
     log_plain("  status            Show project and AI status\n");
@@ -149,6 +150,31 @@ int main(int argc, char** argv) {
         } else {
             log_plain("\n");
             log_error("Build failed");
+        }
+    }
+    else if (strcmp(command, "auto") == 0 || strcmp(command, "build-ai") == 0) {
+        log_info("Starting AI-powered autonomous build...");
+        log_plain("\n");
+
+        if (!cyxmake_ai_enabled(orch)) {
+            log_error("Autonomous build requires AI engine");
+            log_plain("\n");
+            log_info("To enable AI:");
+            log_info("  1. Download model from: https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF");
+            log_info("  2. Place at: ~/.cyxmake/models/qwen2.5-coder-3b-q4_k_m.gguf");
+            log_info("  3. Run: cyxmake test-llm (to verify)");
+            log_plain("\n");
+            log_info("Or use 'cyxmake build' for traditional build with pattern-based recovery");
+            err = CYXMAKE_ERROR_INTERNAL;
+        } else {
+            err = cyxmake_build_autonomous(orch, ".");
+            if (err == CYXMAKE_SUCCESS) {
+                log_plain("\n");
+                log_success("Autonomous build completed successfully!");
+            } else {
+                log_plain("\n");
+                log_error("Autonomous build failed");
+            }
         }
     }
     else if (strcmp(command, "create") == 0) {

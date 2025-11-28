@@ -99,6 +99,37 @@ cyxmake> read readme and follow the instructions to build
 cyxmake> @ai what's wrong?  # Explicit AI routing
 ```
 
+### AI-Powered Autonomous Build
+
+Let AI handle everything - just run one command:
+
+```bash
+$ cyxmake auto
+=== AI Build Agent Starting ===
+Project: ./my-project
+Using AI provider: lmstudio
+
+AI analyzing project and creating build plan...
+=== Build Plan ===
+Summary: Build C++ project using CMake
+Steps: 2
+  [  ] 1. [Configure] Configure CMake project
+  [  ] 2. [Build] Build the project
+
+[Configure] Configure CMake project
+   ✓ Step completed successfully
+[Build] Build the project
+   ✓ Step completed successfully
+
+=== Build Successful! ===
+```
+
+When errors occur, the AI automatically:
+1. **Analyzes** the error output
+2. **Creates** a fix plan
+3. **Executes** the fixes
+4. **Retries** until success (up to 5 attempts)
+
 ### Autonomous Error Recovery
 
 When builds fail, CyxMake:
@@ -167,35 +198,80 @@ cyxmake
 
 ### 2. Configure AI (Optional but Recommended)
 
-Create `cyxmake.toml` in your project root:
+Create `cyxmake.toml` in your project root or home directory (`~/.cyxmake/cyxmake.toml`):
 
 ```toml
 [ai]
-default_provider = "ollama"
-timeout = 180
+default_provider = "lmstudio"  # Change to your preferred provider
+timeout = 120
+max_tokens = 2048
+temperature = 0.2
 
-# Local Ollama
+# ============================================
+# OPTION 1: LM Studio (Recommended for Local)
+# ============================================
+# Easy to use with any GGUF model
+[ai.providers.lmstudio]
+enabled = true
+type = "openai"
+api_key = "not-needed"
+base_url = "http://localhost:1234/v1"
+model = "local-model"
+
+# ============================================
+# OPTION 2: Local llama.cpp (Direct Model)
+# ============================================
+# Uses bundled llama.cpp - no server needed
+# Download models to ~/.cyxmake/models/
+[ai.providers.local]
+enabled = true
+type = "llamacpp"
+model_path = "~/.cyxmake/models/qwen2.5-coder-3b-q4_k_m.gguf"
+context_size = 4096
+gpu_layers = 0      # Set > 0 for GPU acceleration
+threads = 6         # CPU threads to use
+
+# ============================================
+# OPTION 3: Ollama
+# ============================================
 [ai.providers.ollama]
 enabled = true
 type = "ollama"
 base_url = "http://localhost:11434"
 model = "llama2"
 
-# Or use LM Studio
-[ai.providers.lmstudio]
-enabled = true
-type = "custom"
-api_key = "not-needed"
-base_url = "http://localhost:1234/v1"  # Must include /v1
-model = "your-model-name"
-
-# Or cloud providers
+# ============================================
+# OPTION 4: Cloud Providers
+# ============================================
+# OpenAI
 [ai.providers.openai]
 enabled = true
 type = "openai"
 api_key = "${OPENAI_API_KEY}"
 base_url = "https://api.openai.com/v1"
 model = "gpt-4o-mini"
+
+# Anthropic Claude
+[ai.providers.anthropic]
+enabled = true
+type = "anthropic"
+api_key = "${ANTHROPIC_API_KEY}"
+model = "claude-3-haiku-20240307"
+
+# Google Gemini
+[ai.providers.gemini]
+enabled = true
+type = "gemini"
+api_key = "${GEMINI_API_KEY}"
+model = "gemini-1.5-flash"
+
+# OpenRouter (access 100+ models)
+[ai.providers.openrouter]
+enabled = true
+type = "openai"
+api_key = "${OPENROUTER_API_KEY}"
+base_url = "https://openrouter.ai/api/v1"
+model = "anthropic/claude-3-haiku"
 ```
 
 ### 3. Use CyxMake
@@ -285,6 +361,16 @@ cyxmake> @ai fix the errors     # Ask AI for help
 | `/ai test` | - | Test current AI connection |
 | `/exit` | `/q` | Exit CyxMake |
 
+### CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `cyxmake` | Start interactive REPL |
+| `cyxmake build` | Build project (with error recovery) |
+| `cyxmake auto` | **AI-powered autonomous build** |
+| `cyxmake init` | Analyze and cache project |
+| `cyxmake help` | Show help |
+
 ### Natural Language
 
 | Command | What It Does |
@@ -309,8 +395,9 @@ cyxmake> @ai fix the errors     # Ask AI for help
 - [x] **Interactive REPL** - Full command-line interface
 - [x] **Natural Language Parsing** - Intent detection with confidence scoring
 - [x] **Intelligent Routing** - Complex queries go to AI, simple ones execute locally
-- [x] **Multi-Provider AI** - Ollama, LM Studio, OpenAI, Anthropic, Gemini, OpenRouter, Groq
+- [x] **Multi-Provider AI** - Ollama, LM Studio, OpenAI, Anthropic, Gemini, OpenRouter, Groq, llama.cpp
 - [x] **AI Agent System** - LLM-powered action execution
+- [x] **AI Autonomous Build** - `cyxmake auto` for fully autonomous building
 - [x] **Tool Discovery** - Auto-detects compilers, build tools, package managers
 - [x] **Tool Execution** - Safe command execution with output capture
 - [x] **Error Recovery** - Pattern matching + AI-powered diagnosis
@@ -320,7 +407,6 @@ cyxmake> @ai fix the errors     # Ask AI for help
 
 ### In Progress
 
-- [ ] llama.cpp direct model loading (interface ready)
 - [ ] Interactive error fixing
 - [ ] Project generation from natural language
 

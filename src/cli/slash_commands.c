@@ -11,6 +11,9 @@
 #include "cyxmake/conversation_context.h"
 #include "cyxmake/llm_interface.h"
 #include "cyxmake/ai_provider.h"
+#include "cyxmake/project_graph.h"
+#include "cyxmake/project_context.h"
+#include "cyxmake/smart_agent.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,6 +60,8 @@ static const SlashCommand slash_commands[] = {
     {"version", "v",    "Show version info",            cmd_version},
     {"context", "ctx",  "Show conversation context",    cmd_context},
     {"ai",      NULL,   "AI status and commands",       cmd_ai},
+    {"graph",   "g",    "Analyze project dependencies", cmd_graph},
+    {"memory",  "m",    "Show/manage agent memory",     cmd_memory},
     {NULL, NULL, NULL, NULL}
 };
 
@@ -1019,5 +1024,378 @@ bool cmd_ai(ReplSession* session, const char* args) {
         printf("\n");
     }
 
+    return true;
+}
+
+/* /graph command - analyze project dependencies */
+bool cmd_graph(ReplSession* session, const char* args) {
+    bool colors = session->config.colors_enabled;
+
+    if (colors) {
+        printf("\n%s%s=== Project Dependency Graph ===%s\n\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
+    } else {
+        printf("\n=== Project Dependency Graph ===\n\n");
+    }
+
+    /* Ensure project graph exists */
+    if (!session->project_graph) {
+        if (session->working_dir) {
+            session->project_graph = project_graph_create(session->working_dir);
+        }
+        if (!session->project_graph) {
+            if (colors) {
+                printf("%s%s Error: Could not initialize project graph%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Error: Could not initialize project graph\n", SYM_CROSS);
+            }
+            return true;
+        }
+    }
+
+    /* Parse subcommands */
+    if (args && *args) {
+        while (*args == ' ') args++;
+
+        if (strncmp(args, "analyze", 7) == 0 || strncmp(args, "build", 5) == 0) {
+            /* Build the graph from source files */
+            if (colors) {
+                printf("%sAnalyzing project files...%s\n", COLOR_YELLOW, COLOR_RESET);
+            } else {
+                printf("Analyzing project files...\n");
+            }
+
+            /* Use project analyzer to get source files */
+            size_t file_count = 0;
+            SourceFile** files = scan_source_files(session->working_dir, LANG_UNKNOWN, &file_count);
+
+            if (files && file_count > 0) {
+                if (project_graph_build(session->project_graph, files, file_count)) {
+                    if (colors) {
+                        printf("\n%s%s Graph built successfully!%s\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET);
+                    } else {
+                        printf("\n%s Graph built successfully!\n", SYM_CHECK);
+                    }
+                } else {
+                    if (colors) {
+                        printf("%s%s Failed to build graph%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+                    } else {
+                        printf("%s Failed to build graph\n", SYM_CROSS);
+                    }
+                }
+
+                /* Free source files */
+                for (size_t i = 0; i < file_count; i++) {
+                    if (files[i]) {
+                        free(files[i]->path);
+                        free(files[i]);
+                    }
+                }
+                free(files);
+            } else {
+                printf("No source files found to analyze.\n");
+            }
+        } else if (strncmp(args, "summary", 7) == 0 || strncmp(args, "stats", 5) == 0) {
+            /* Show graph summary */
+            if (!session->project_graph->is_complete) {
+                printf("Graph not built yet. Run '/graph analyze' first.\n");
+                return true;
+            }
+
+            char* summary = project_graph_summarize(session->project_graph);
+            if (summary) {
+                printf("%s", summary);
+                free(summary);
+            }
+        } else if (strncmp(args, "deps ", 5) == 0 || strncmp(args, "dependencies ", 13) == 0) {
+            /* Show dependencies for a file */
+            const char* path = args + (args[0] == 'd' && args[1] == 'e' && args[2] == 'p' ? 5 : 13);
+            while (*path == ' ') path++;
+
+            GraphNode* node = project_graph_find(session->project_graph, path);
+            if (node) {
+                if (colors) {
+                    printf("%s%s depends on:%s\n", COLOR_BOLD, node->relative_path, COLOR_RESET);
+                } else {
+                    printf("%s depends on:\n", node->relative_path);
+                }
+
+                if (node->depends_on_count == 0) {
+                    printf("  (no dependencies)\n");
+                } else {
+                    for (int i = 0; i < node->depends_on_count; i++) {
+                        printf("  %s %s\n", SYM_BULLET, node->depends_on[i]->relative_path);
+                    }
+                }
+
+                printf("\n");
+                if (colors) {
+                    printf("%sDepended on by:%s\n", COLOR_BOLD, COLOR_RESET);
+                } else {
+                    printf("Depended on by:\n");
+                }
+
+                if (node->depended_by_count == 0) {
+                    printf("  (nothing depends on this file)\n");
+                } else {
+                    for (int i = 0; i < node->depended_by_count; i++) {
+                        printf("  %s %s\n", SYM_BULLET, node->depended_by[i]->relative_path);
+                    }
+                }
+            } else {
+                printf("File not found in graph: %s\n", path);
+            }
+        } else if (strncmp(args, "impact ", 7) == 0) {
+            /* Show impact analysis */
+            const char* path = args + 7;
+            while (*path == ' ') path++;
+
+            int count = 0;
+            GraphNode** affected = project_graph_impact_analysis(session->project_graph, path, &count);
+
+            if (affected && count > 0) {
+                if (colors) {
+                    printf("%sChanging %s would affect %d files:%s\n", COLOR_YELLOW, path, count, COLOR_RESET);
+                } else {
+                    printf("Changing %s would affect %d files:\n", path, count);
+                }
+
+                for (int i = 0; i < count; i++) {
+                    printf("  %s %s\n", SYM_BULLET, affected[i]->relative_path);
+                }
+                free(affected);
+            } else {
+                printf("No files would be affected by changes to %s\n", path);
+            }
+        } else if (strncmp(args, "hotspots", 8) == 0) {
+            /* Show most imported files */
+            int count = 0;
+            GraphNode** hotspots = project_graph_get_hotspots(session->project_graph, 10, &count);
+
+            if (hotspots && count > 0) {
+                if (colors) {
+                    printf("%s%sMost imported files (hotspots):%s\n", COLOR_BOLD, COLOR_YELLOW, COLOR_RESET);
+                } else {
+                    printf("Most imported files (hotspots):\n");
+                }
+
+                for (int i = 0; i < count && i < 10; i++) {
+                    if (hotspots[i]->depended_by_count > 0) {
+                        printf("  %2d. %s (%d dependents)\n",
+                               i + 1,
+                               hotspots[i]->relative_path,
+                               hotspots[i]->depended_by_count);
+                    }
+                }
+                free(hotspots);
+            } else {
+                printf("No hotspots found. Run '/graph analyze' first.\n");
+            }
+        } else if (strncmp(args, "external", 8) == 0) {
+            /* Show external dependencies */
+            if (session->project_graph->external_dep_count > 0) {
+                if (colors) {
+                    printf("%s%sExternal dependencies:%s\n", COLOR_BOLD, COLOR_MAGENTA, COLOR_RESET);
+                } else {
+                    printf("External dependencies:\n");
+                }
+
+                for (int i = 0; i < session->project_graph->external_dep_count; i++) {
+                    printf("  %s %s\n", SYM_BULLET, session->project_graph->external_deps[i]);
+                }
+            } else {
+                printf("No external dependencies found. Run '/graph analyze' first.\n");
+            }
+        } else {
+            printf("Unknown subcommand: %s\n", args);
+            printf("Use '/graph' for help.\n");
+        }
+    } else {
+        /* Show help */
+        if (colors) {
+            printf("%sUsage:%s\n", COLOR_BOLD, COLOR_RESET);
+            printf("  %s/graph analyze%s     - Build the dependency graph\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/graph summary%s     - Show graph statistics\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/graph deps <file>%s - Show dependencies for a file\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/graph impact <file>%s - Show files affected by changes\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/graph hotspots%s    - Show most imported files\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/graph external%s    - Show external dependencies\n", COLOR_CYAN, COLOR_RESET);
+        } else {
+            printf("Usage:\n");
+            printf("  /graph analyze      - Build the dependency graph\n");
+            printf("  /graph summary      - Show graph statistics\n");
+            printf("  /graph deps <file>  - Show dependencies for a file\n");
+            printf("  /graph impact <file> - Show files affected by changes\n");
+            printf("  /graph hotspots     - Show most imported files\n");
+            printf("  /graph external     - Show external dependencies\n");
+        }
+
+        /* Show current status */
+        printf("\n");
+        if (session->project_graph->is_complete) {
+            if (colors) {
+                printf("%sStatus: Graph built (%d files, %d imports)%s\n",
+                       COLOR_GREEN,
+                       session->project_graph->node_count,
+                       session->project_graph->total_imports,
+                       COLOR_RESET);
+            } else {
+                printf("Status: Graph built (%d files, %d imports)\n",
+                       session->project_graph->node_count,
+                       session->project_graph->total_imports);
+            }
+        } else {
+            printf("Status: Graph not built. Run '/graph analyze' to build.\n");
+        }
+    }
+
+    printf("\n");
+    return true;
+}
+
+/* /memory command - show/manage agent memory */
+bool cmd_memory(ReplSession* session, const char* args) {
+    bool colors = session->config.colors_enabled;
+
+    if (colors) {
+        printf("\n%s%s=== Agent Memory ===%s\n\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
+    } else {
+        printf("\n=== Agent Memory ===\n\n");
+    }
+
+    /* Check if smart agent exists */
+    if (!session->smart_agent) {
+        printf("Smart Agent not initialized (no AI provider configured).\n\n");
+        return true;
+    }
+
+    AgentMemory* mem = session->smart_agent->memory;
+    if (!mem) {
+        printf("No memory available.\n\n");
+        return true;
+    }
+
+    /* Parse subcommands */
+    if (args && *args) {
+        while (*args == ' ') args++;
+
+        if (strncmp(args, "save", 4) == 0) {
+            /* Force save memory */
+            if (session->working_dir) {
+                char memory_path[1024];
+                snprintf(memory_path, sizeof(memory_path), "%s/.cyxmake/agent_memory.json",
+                         session->working_dir);
+                if (agent_memory_save(mem, memory_path)) {
+                    if (colors) {
+                        printf("%s%s Memory saved to: %s%s\n", COLOR_GREEN, SYM_CHECK, memory_path, COLOR_RESET);
+                    } else {
+                        printf("%s Memory saved to: %s\n", SYM_CHECK, memory_path);
+                    }
+                } else {
+                    if (colors) {
+                        printf("%s%s Failed to save memory%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+                    } else {
+                        printf("%s Failed to save memory\n", SYM_CROSS);
+                    }
+                }
+            } else {
+                printf("No working directory set.\n");
+            }
+        } else if (strncmp(args, "clear", 5) == 0) {
+            /* Clear memory */
+            agent_memory_free(mem);
+            session->smart_agent->memory = agent_memory_create();
+            if (colors) {
+                printf("%s%s Memory cleared%s\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET);
+            } else {
+                printf("%s Memory cleared\n", SYM_CHECK);
+            }
+        } else if (strncmp(args, "test", 4) == 0) {
+            /* Test learning by adding sample data */
+            smart_agent_learn_success(session->smart_agent, "cmake --build .", "build");
+            smart_agent_learn_success(session->smart_agent, "ctest --output-on-failure", "test");
+            smart_agent_learn_failure(session->smart_agent, "make install", "permission denied");
+            if (colors) {
+                printf("%s%s Added test learning data%s\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET);
+            } else {
+                printf("%s Added test learning data\n", SYM_CHECK);
+            }
+        } else {
+            printf("Unknown subcommand: %s\n", args);
+            printf("Use '/memory' for help.\n");
+        }
+    } else {
+        /* Show memory status and contents */
+        if (colors) {
+            printf("%sMemory Statistics:%s\n", COLOR_BOLD, COLOR_RESET);
+        } else {
+            printf("Memory Statistics:\n");
+        }
+        printf("  Commands recorded: %d\n", mem->command_count);
+        printf("  Error fixes learned: %d\n", mem->fix_count);
+        printf("  Prefers verbose: %s\n", mem->prefers_verbose ? "yes" : "no");
+        printf("  Prefers parallel: %s\n", mem->prefers_parallel ? "yes" : "no");
+        if (mem->preferred_config) {
+            printf("  Preferred config: %s\n", mem->preferred_config);
+        }
+
+        /* Show recent commands */
+        if (mem->command_count > 0) {
+            printf("\n");
+            if (colors) {
+                printf("%sRecent Commands:%s\n", COLOR_BOLD, COLOR_RESET);
+            } else {
+                printf("Recent Commands:\n");
+            }
+            int start = mem->command_count > 5 ? mem->command_count - 5 : 0;
+            for (int i = start; i < mem->command_count; i++) {
+                const char* status = mem->command_successes[i] ? SYM_CHECK : SYM_CROSS;
+                if (colors) {
+                    const char* color = mem->command_successes[i] ? COLOR_GREEN : COLOR_RED;
+                    printf("  %s%s%s %s\n", color, status, COLOR_RESET,
+                           mem->recent_commands[i] ? mem->recent_commands[i] : "(null)");
+                } else {
+                    printf("  %s %s\n", status, mem->recent_commands[i] ? mem->recent_commands[i] : "(null)");
+                }
+            }
+        }
+
+        /* Show learned fixes */
+        if (mem->fix_count > 0) {
+            printf("\n");
+            if (colors) {
+                printf("%sLearned Error Fixes:%s\n", COLOR_BOLD, COLOR_RESET);
+            } else {
+                printf("Learned Error Fixes:\n");
+            }
+            int start = mem->fix_count > 5 ? mem->fix_count - 5 : 0;
+            for (int i = start; i < mem->fix_count; i++) {
+                if (colors) {
+                    printf("  %s%s%s -> %s%s%s\n",
+                           COLOR_RED, mem->error_signatures[i] ? mem->error_signatures[i] : "?", COLOR_RESET,
+                           COLOR_GREEN, mem->successful_fixes[i] ? mem->successful_fixes[i] : "?", COLOR_RESET);
+                } else {
+                    printf("  %s -> %s\n",
+                           mem->error_signatures[i] ? mem->error_signatures[i] : "?",
+                           mem->successful_fixes[i] ? mem->successful_fixes[i] : "?");
+                }
+            }
+        }
+
+        /* Show help */
+        printf("\n");
+        if (colors) {
+            printf("%sCommands:%s\n", COLOR_BOLD, COLOR_RESET);
+            printf("  %s/memory save%s   - Save memory to disk\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/memory clear%s  - Clear all memory\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/memory test%s   - Add test data\n", COLOR_CYAN, COLOR_RESET);
+        } else {
+            printf("Commands:\n");
+            printf("  /memory save   - Save memory to disk\n");
+            printf("  /memory clear  - Clear all memory\n");
+            printf("  /memory test   - Add test data\n");
+        }
+    }
+
+    printf("\n");
     return true;
 }

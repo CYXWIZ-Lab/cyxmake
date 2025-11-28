@@ -191,16 +191,16 @@ BLOCKED     → Never allow (system files, etc.)
 
 ## Implementation Phases
 
-### Phase 1: Basic REPL (Foundation)
+### Phase 1: Basic REPL (Foundation) ✅ COMPLETE
 **Goal:** Get a working interactive loop
 
 **Tasks:**
-- [ ] Create `repl.c` with basic input loop
-- [ ] Implement simple line reading (no fancy features yet)
-- [ ] Detect slash commands vs natural language
-- [ ] Implement core slash commands: `/help`, `/exit`, `/clear`
-- [ ] Connect to existing NL parser for natural language
-- [ ] Basic prompt: `cyxmake> `
+- [x] Create `repl.c` with basic input loop
+- [x] Implement simple line reading (no fancy features yet)
+- [x] Detect slash commands vs natural language
+- [x] Implement core slash commands: `/help`, `/exit`, `/clear`
+- [x] Connect to existing NL parser for natural language
+- [x] Basic prompt: `cyxmake> `
 
 **Deliverable:** Can type `cyxmake`, enter REPL, type commands, exit
 
@@ -214,28 +214,28 @@ cyxmake> /exit
 $
 ```
 
-### Phase 2: Slash Commands
+### Phase 2: Slash Commands ✅ COMPLETE
 **Goal:** Full slash command system
 
 **Tasks:**
-- [ ] Implement all slash commands from table above
-- [ ] Add command aliases (`/b` for `/build`)
-- [ ] Add argument parsing for commands (`/config set key value`)
-- [ ] Command not found error handling
-- [ ] `/status` shows project and AI info
-- [ ] `/config` shows and modifies settings
+- [x] Implement all slash commands from table above
+- [x] Add command aliases (`/b` for `/build`)
+- [x] Add argument parsing for commands (`/config set key value`)
+- [x] Command not found error handling
+- [x] `/status` shows project and AI info
+- [x] `/config` shows and modifies settings
 
 **Deliverable:** All slash commands working
 
-### Phase 3: Permission System
+### Phase 3: Permission System ✅ COMPLETE
 **Goal:** Ask before dangerous operations
 
 **Tasks:**
-- [ ] Create permission classification for all actions
-- [ ] Implement permission prompt UI
-- [ ] Add "Always allow" memory (per-session)
-- [ ] Add permission for: create, modify, delete, install, run
-- [ ] Audit log of permitted actions
+- [x] Create permission classification for all actions
+- [x] Implement permission prompt UI
+- [x] Add "Always allow" memory (per-session)
+- [x] Add permission for: create, modify, delete, install, run
+- [x] Audit log of permitted actions
 
 **Deliverable:** Agent asks before creating/deleting files
 
@@ -245,15 +245,15 @@ cyxmake> create a readme file
 ✓ Created README.md
 ```
 
-### Phase 4: Conversation Context
+### Phase 4: Conversation Context ✅ COMPLETE
 **Goal:** Remember conversation history
 
 **Tasks:**
-- [ ] Store message history
-- [ ] Pass context to LLM for better responses
-- [ ] Remember current file being discussed
-- [ ] Remember last error for "fix it" commands
-- [ ] `/history` command to view past messages
+- [x] Store message history
+- [x] Pass context to LLM for better responses
+- [x] Remember current file being discussed
+- [x] Remember last error for "fix it" commands
+- [x] `/history` command to view past messages
 
 **Deliverable:** AI remembers context
 
@@ -264,43 +264,84 @@ cyxmake> what does line 42 do?
 [AI explains line 42 of main.c - remembers context]
 ```
 
-### Phase 5: Enhanced Terminal
+### Phase 5: Enhanced Terminal ✅ COMPLETE
 **Goal:** Better UX with colors, history, completion
 
 **Tasks:**
-- [ ] Add colored output (errors red, success green)
-- [ ] Input history with arrow keys
-- [ ] Tab completion for file paths
-- [ ] Tab completion for slash commands
-- [ ] Progress indicators for long operations
-- [ ] Spinner for AI thinking
+- [x] Add colored output (errors red, success green)
+- [x] Input history with arrow keys
+- [x] Tab completion for file paths
+- [x] Tab completion for slash commands
+- [ ] Progress indicators for long operations (future)
+- [ ] Spinner for AI thinking (future)
 
 **Deliverable:** Polished terminal experience
 
-### Phase 6: Action Planning
+**Implementation Notes:**
+- Created `input.h` / `input.c` with cross-platform line editing
+- Windows: Uses Console API with `_getch()` for raw input
+- POSIX: Uses termios for raw input
+- Arrow key history navigation (up/down)
+- Tab completion for `/` commands and file paths
+- Cursor movement (left/right, home/end)
+- Backspace/delete support
+- ANSI escape code handling for colored prompts
+
+### Phase 6: Action Planning ✅ COMPLETE
 **Goal:** Multi-step actions with approval
 
 **Tasks:**
-- [ ] Detect complex requests needing multiple steps
-- [ ] Generate action plan
-- [ ] Show plan to user for approval
-- [ ] Execute steps one by one
-- [ ] Rollback on failure
+- [x] Detect complex requests needing multiple steps
+- [x] Generate action plan from AI responses
+- [x] Show plan to user for approval (Y/Step/No)
+- [x] Execute steps one by one with progress
+- [x] Rollback on failure (optional)
 
 **Deliverable:** Complex commands work
 
 ```bash
 cyxmake> fix all compilation errors
-● Planning actions:
-  1. Build project to find errors
-  2. Read src/main.c (3 errors)
-  3. Fix line 42: missing semicolon
-  4. Fix line 67: undefined variable
-  5. Fix line 89: type mismatch
-  6. Rebuild to verify
 
-Execute plan? [Y/n/step]
+Action Plan (4 steps)
+The AI wants to fix compilation errors in your project.
+
+Steps:
+  [ ] 1. Build project to find errors
+  [ ] 2. Read src/main.c
+  [ ] 3. Fix line 42: missing semicolon
+  [ ] 4. Rebuild to verify
+
+[!] Execute this plan?
+  [Y]es - Execute all steps
+  [S]tep - Execute step-by-step
+  [N]o  - Cancel
+
+Choice [Y/s/n]: y
+
+* Executing plan: Action Plan (4 steps)
+
+> Step 1: Build project to find errors
+  [OK] Done
+> Step 2: Read src/main.c
+  [OK] Done
+> Step 3: Fix line 42
+  [OK] Done
+> Step 4: Rebuild to verify
+  [OK] Done
+
+Progress: 4/4 completed
 ```
+
+**Implementation Notes:**
+- Created `action_planner.h` / `action_planner.c` with:
+  - `ActionPlan` and `ActionStep` data structures
+  - Plan creation from `AIAgentResponse`
+  - Three approval modes: All at once, Step-by-step, Cancel
+  - Step execution with permission checks
+  - Rollback support for reversible actions (file create → delete)
+  - Progress tracking and display
+- Integrated with REPL: multi-step AI responses automatically use planner
+- Single actions bypass planner for speed
 
 ---
 

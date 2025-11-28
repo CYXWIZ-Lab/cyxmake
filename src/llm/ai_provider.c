@@ -237,8 +237,8 @@ int ai_registry_load_config(AIProviderRegistry* registry, const char* config_pat
     }
 
     /* Get global settings */
-    int global_timeout = 60;
-    int global_max_tokens = 1024;
+    int global_timeout = 120;  /* 2 minutes default for AI responses */
+    int global_max_tokens = 2048;
     float global_temperature = 0.7f;
 
     toml_datum_t timeout = toml_int_in(ai, "timeout");
@@ -389,8 +389,8 @@ AIProviderConfig* ai_config_create(const char* name, AIProviderType type) {
     config->name = name ? strdup(name) : NULL;
     config->type = type;
     config->enabled = true;
-    config->timeout_sec = 60;
-    config->max_tokens = 1024;
+    config->timeout_sec = 120;  /* 2 minutes default */
+    config->max_tokens = 2048;
     config->temperature = 0.7f;
     config->context_size = 4096;
     config->threads = 4;

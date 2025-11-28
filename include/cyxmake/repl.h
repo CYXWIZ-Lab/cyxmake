@@ -12,13 +12,51 @@
 extern "C" {
 #endif
 
-/* Forward declarations */
+/* Forward declarations - with guards to prevent redefinition */
+#ifndef CYXMAKE_ORCHESTRATOR_FWD
+#define CYXMAKE_ORCHESTRATOR_FWD
 typedef struct Orchestrator Orchestrator;
+#endif
+
+#ifndef CYXMAKE_LLM_CONTEXT_FWD
+#define CYXMAKE_LLM_CONTEXT_FWD
 typedef struct LLMContext LLMContext;
+#endif
+
+#ifndef CYXMAKE_PERMISSION_CONTEXT_FWD
+#define CYXMAKE_PERMISSION_CONTEXT_FWD
 typedef struct PermissionContext PermissionContext;
+#endif
+
+#ifndef CYXMAKE_CONVERSATION_CONTEXT_FWD
+#define CYXMAKE_CONVERSATION_CONTEXT_FWD
 typedef struct ConversationContext ConversationContext;
+#endif
+
+#ifndef CYXMAKE_AI_PROVIDER_REGISTRY_FWD
+#define CYXMAKE_AI_PROVIDER_REGISTRY_FWD
 typedef struct AIProviderRegistry AIProviderRegistry;
+#endif
+
+#ifndef CYXMAKE_AI_PROVIDER_FWD
+#define CYXMAKE_AI_PROVIDER_FWD
 typedef struct AIProvider AIProvider;
+#endif
+
+#ifndef CYXMAKE_INPUT_CONTEXT_FWD
+#define CYXMAKE_INPUT_CONTEXT_FWD
+typedef struct InputContext InputContext;
+#endif
+
+#ifndef CYXMAKE_SMART_AGENT_FWD
+#define CYXMAKE_SMART_AGENT_FWD
+typedef struct SmartAgent SmartAgent;
+#endif
+
+#ifndef CYXMAKE_PROJECT_GRAPH_FWD
+#define CYXMAKE_PROJECT_GRAPH_FWD
+typedef struct ProjectGraph ProjectGraph;
+#endif
 
 /**
  * REPL configuration
@@ -42,12 +80,15 @@ typedef struct ReplSession {
     ConversationContext* conversation;   /* Conversation context */
     AIProviderRegistry* ai_registry;     /* Multi-provider AI registry */
     AIProvider* current_provider;        /* Currently active AI provider */
+    InputContext* input;                 /* Line editing context */
+    SmartAgent* smart_agent;             /* Intelligent reasoning agent */
+    ProjectGraph* project_graph;         /* Project dependency graph */
 
     /* Session state */
     bool running;
     int command_count;
 
-    /* History */
+    /* History (deprecated - use input->history instead) */
     char** history;
     int history_count;
     int history_capacity;

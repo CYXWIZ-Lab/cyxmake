@@ -15,6 +15,11 @@
 #include "cyxmake/conversation_context.h"
 #include "cyxmake/build_executor.h"
 #include "cyxmake/ai_provider.h"
+#include "cyxmake/input.h"
+#include "cyxmake/action_planner.h"
+#include "cyxmake/smart_agent.h"
+#include "cyxmake/project_graph.h"
+#include "cyxmake/project_context.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -171,6 +176,48 @@ ReplSession* repl_session_create(const ReplConfig* config, Orchestrator* orch) {
         }
     }
 
+    /* Initialize input context with line editing support */
+    session->input = input_context_create(session->config.history_size);
+    if (session->input) {
+        input_set_colors(session->input, session->config.colors_enabled);
+        input_set_completion_callback(session->input, input_complete_combined);
+    }
+
+    /* Initialize Smart Agent if AI provider is available */
+    if (session->current_provider) {
+        ToolRegistry* tools = session->orchestrator ?
+                              cyxmake_get_tools(session->orchestrator) : NULL;
+        session->smart_agent = smart_agent_create(session->current_provider, tools);
+        if (session->smart_agent) {
+            session->smart_agent->verbose = session->config.verbose;
+            session->smart_agent->explain_actions = true;
+
+            /* Try to load existing agent memory */
+            if (session->working_dir) {
+                char memory_path[1024];
+                snprintf(memory_path, sizeof(memory_path), "%s/.cyxmake/agent_memory.json",
+                         session->working_dir);
+                AgentMemory* loaded = agent_memory_load(memory_path);
+                if (loaded) {
+                    agent_memory_free(session->smart_agent->memory);
+                    session->smart_agent->memory = loaded;
+                    log_debug("Loaded agent memory: %d commands, %d fixes",
+                              loaded->command_count, loaded->fix_count);
+                }
+            }
+
+            log_debug("Smart Agent initialized");
+        }
+    }
+
+    /* Initialize Project Graph for dependency analysis */
+    if (session->working_dir) {
+        session->project_graph = project_graph_create(session->working_dir);
+        if (session->project_graph) {
+            log_debug("Project graph initialized for: %s", session->working_dir);
+        }
+    }
+
     session->running = true;
     session->command_count = 0;
 
@@ -202,6 +249,23 @@ void repl_session_free(ReplSession* session) {
     /* Free AI provider registry */
     ai_registry_free(session->ai_registry);
     /* Note: current_provider is freed by registry, don't double-free */
+
+    /* Free input context */
+    input_context_free(session->input);
+
+    /* Save and free Smart Agent */
+    if (session->smart_agent && session->smart_agent->memory && session->working_dir) {
+        char memory_path[1024];
+        snprintf(memory_path, sizeof(memory_path), "%s/.cyxmake/agent_memory.json",
+                 session->working_dir);
+        if (agent_memory_save(session->smart_agent->memory, memory_path)) {
+            log_debug("Saved agent memory to: %s", memory_path);
+        }
+    }
+    smart_agent_free(session->smart_agent);
+
+    /* Free Project Graph */
+    project_graph_free(session->project_graph);
 
     /* Note: Don't free orchestrator - it may be shared */
 
@@ -586,55 +650,97 @@ static bool execute_ai_agent_response(ReplSession* session, AIAgentResponse* res
         action_count++;
     }
 
-    /* Check if we need confirmation */
-    if (response->needs_confirmation) {
-        if (session->config.colors_enabled) {
-            printf("%s%s The AI wants to perform %d action(s):%s\n",
-                   COLOR_YELLOW, SYM_WARN, action_count, COLOR_RESET);
-        } else {
-            printf("The AI wants to perform %d action(s):\n", action_count);
-        }
-
-        /* List all planned actions */
-        int idx = 1;
-        for (AIAction* a = response->actions; a; a = a->next) {
-            printf("  %d. %s", idx++, ai_action_type_name(a->type));
-            if (a->target) printf(": %s", a->target);
-            printf("\n");
-        }
-        printf("\n");
-    }
-
-    /* Execute each action with permission checks */
-    bool all_success = true;
-    for (AIAction* action = response->actions; action; action = action->next) {
-        /* Check permission for this action */
-        ActionType perm_type = ai_action_to_permission(action->type);
-        const char* target = action->target ? action->target :
-                             (action->content ? action->content : "AI action");
-
-        char reason_buf[256];
-        snprintf(reason_buf, sizeof(reason_buf), "AI agent: %s",
-                 action->reason ? action->reason : ai_action_type_name(action->type));
-
-        if (!permission_check(session->permissions, perm_type, target, reason_buf)) {
+    /* For multi-step actions (2+), use the action planner for better UX */
+    if (action_count >= 2 || response->needs_confirmation) {
+        /* Create plan from AI response */
+        ActionPlan* plan = plan_from_ai_response(response, NULL);
+        if (!plan) {
             if (session->config.colors_enabled) {
-                printf("%s%s Permission denied for: %s%s\n",
-                       COLOR_RED, SYM_CROSS, ai_action_type_name(action->type), COLOR_RESET);
+                printf("%s%s Failed to create action plan%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
             } else {
-                printf("Permission denied for: %s\n", ai_action_type_name(action->type));
+                printf("Failed to create action plan\n");
             }
-            continue;
+            return false;
         }
 
-        /* Execute the action */
-        if (!execute_single_ai_action(session, action)) {
-            all_success = false;
-            /* Continue with other actions unless critical */
+        /* Request approval */
+        ApprovalMode approval = plan_request_approval(plan, session);
+        if (approval == APPROVAL_DENIED) {
+            if (session->config.colors_enabled) {
+                printf("%s%s Plan cancelled%s\n", COLOR_YELLOW, SYM_WARN, COLOR_RESET);
+            } else {
+                printf("Plan cancelled\n");
+            }
+            plan_free(plan);
+            return true;  /* Not an error, just user choice */
         }
+
+        /* Execute plan */
+        PlanExecOptions opts = plan_exec_options_default();
+        opts.stop_on_failure = true;
+        opts.auto_rollback = false;  /* Let user decide */
+
+        bool success = plan_execute(plan, session, &opts);
+
+        /* If failed, offer rollback */
+        if (!success && plan->completed_count > 0) {
+            if (session->config.colors_enabled) {
+                printf("\n%s%s Some steps failed. Rollback completed steps? [y/N]: %s",
+                       COLOR_YELLOW, SYM_WARN, COLOR_RESET);
+            } else {
+                printf("\nSome steps failed. Rollback completed steps? [y/N]: ");
+            }
+            fflush(stdout);
+
+            char buf[64];
+            if (fgets(buf, sizeof(buf), stdin) && (buf[0] == 'y' || buf[0] == 'Y')) {
+                plan_rollback(plan, session);
+            }
+        }
+
+        plan_free(plan);
+        return success;
     }
 
-    return all_success;
+    /* Single action - execute directly with permission check */
+    AIAction* action = response->actions;
+    ActionType perm_type = ai_action_to_permission(action->type);
+    const char* target = action->target ? action->target :
+                         (action->content ? action->content : "AI action");
+
+    char reason_buf[256];
+    snprintf(reason_buf, sizeof(reason_buf), "AI agent: %s",
+             action->reason ? action->reason : ai_action_type_name(action->type));
+
+    if (!permission_check(session->permissions, perm_type, target, reason_buf)) {
+        if (session->config.colors_enabled) {
+            printf("%s%s Permission denied for: %s%s\n",
+                   COLOR_RED, SYM_CROSS, ai_action_type_name(action->type), COLOR_RESET);
+        } else {
+            printf("Permission denied for: %s\n", ai_action_type_name(action->type));
+        }
+        return false;
+    }
+
+    return execute_single_ai_action(session, action);
+}
+
+/* Map SmartIntentType to CommandIntent */
+static CommandIntent smart_intent_to_command_intent(SmartIntentType smart_intent) {
+    switch (smart_intent) {
+        case SMART_INTENT_BUILD:     return INTENT_BUILD;
+        case SMART_INTENT_CLEAN:     return INTENT_CLEAN;
+        case SMART_INTENT_TEST:      return INTENT_TEST;
+        case SMART_INTENT_RUN:       return INTENT_STATUS;  /* Closest match */
+        case SMART_INTENT_FIX:       return INTENT_FIX;
+        case SMART_INTENT_INSTALL:   return INTENT_INSTALL;
+        case SMART_INTENT_CONFIGURE: return INTENT_INIT;
+        case SMART_INTENT_EXPLAIN:   return INTENT_EXPLAIN;
+        case SMART_INTENT_CREATE:    return INTENT_CREATE_FILE;
+        case SMART_INTENT_READ:      return INTENT_READ_FILE;
+        case SMART_INTENT_HELP:      return INTENT_HELP;
+        default:                     return INTENT_UNKNOWN;
+    }
 }
 
 /* Execute natural language command */
@@ -651,8 +757,70 @@ static bool execute_natural_language(ReplSession* session, const char* input) {
                                   CTX_INTENT_OTHER, resolved_target, true);
     }
 
-    /* Parse the command locally first */
-    ParsedCommand* cmd = parse_command_local(input);
+    /* Try Smart Agent for intent understanding if available */
+    SmartIntent* smart_intent = NULL;
+    if (session->smart_agent) {
+        /* Update Smart Agent context */
+        smart_agent_set_conversation(session->smart_agent, session->conversation);
+
+        smart_intent = smart_agent_understand(session->smart_agent, input);
+        if (smart_intent && session->config.verbose) {
+            if (session->config.colors_enabled) {
+                printf("%s[Smart Agent] Intent: %s (%.0f%% confidence)%s\n",
+                       COLOR_DIM,
+                       smart_intent_type_to_string(smart_intent->primary_intent),
+                       smart_intent->overall_confidence * 100,
+                       COLOR_RESET);
+                if (smart_intent->ai_interpretation) {
+                    printf("%s  AI interpretation: %s%s\n",
+                           COLOR_DIM, smart_intent->ai_interpretation, COLOR_RESET);
+                }
+            }
+        }
+    }
+
+    /* Parse the command - use Smart Agent result or fall back to local parsing */
+    ParsedCommand* cmd = NULL;
+
+    if (smart_intent && smart_intent->overall_confidence > 0.5f) {
+        /* Use Smart Agent's understanding */
+        cmd = calloc(1, sizeof(ParsedCommand));
+        if (cmd) {
+            cmd->intent = smart_intent_to_command_intent(smart_intent->primary_intent);
+            cmd->confidence = smart_intent->overall_confidence;
+
+            /* Extract target from smart intent */
+            if (smart_intent->file_ref_count > 0 && smart_intent->file_references) {
+                cmd->target = strdup(smart_intent->file_references[0]);
+            } else if (smart_intent->package_ref_count > 0 && smart_intent->package_references) {
+                cmd->target = strdup(smart_intent->package_references[0]);
+            } else if (smart_intent->target_ref_count > 0 && smart_intent->target_references) {
+                cmd->target = strdup(smart_intent->target_references[0]);
+            }
+
+            /* Handle context references */
+            if (smart_intent->references_last_error && session->conversation) {
+                const char* last_err = conversation_get_last_error(session->conversation);
+                if (last_err && !cmd->target) {
+                    cmd->details = strdup(last_err);
+                }
+            }
+            if (smart_intent->references_last_file && session->conversation) {
+                const char* last_file = conversation_get_current_file(session->conversation);
+                if (last_file && !cmd->target) {
+                    cmd->target = strdup(last_file);
+                }
+            }
+        }
+    }
+
+    /* Fall back to local parsing if Smart Agent didn't help */
+    if (!cmd) {
+        cmd = parse_command_local(input);
+    }
+
+    /* Clean up smart intent */
+    smart_intent_free(smart_intent);
 
     if (!cmd) {
         if (session->config.colors_enabled) {
@@ -1150,7 +1318,12 @@ bool repl_process_input(ReplSession* session, const char* input) {
     while (*p == ' ' || *p == '\t') p++;
     if (*p == '\0') return true;
 
-    /* Add to history */
+    /* Add to input history */
+    if (session->input) {
+        input_history_add(session->input, input);
+    }
+
+    /* Add to legacy history */
     repl_history_add(session, input);
     session->command_count++;
 
@@ -1163,6 +1336,20 @@ bool repl_process_input(ReplSession* session, const char* input) {
     return execute_natural_language(session, p);
 }
 
+/* Build colored prompt string */
+static char* build_colored_prompt(ReplSession* session) {
+    static char prompt_buf[256];
+
+    if (session->config.colors_enabled) {
+        snprintf(prompt_buf, sizeof(prompt_buf), "%s%s%s%s",
+                 COLOR_BOLD, COLOR_GREEN, session->config.prompt, COLOR_RESET);
+    } else {
+        snprintf(prompt_buf, sizeof(prompt_buf), "%s", session->config.prompt);
+    }
+
+    return prompt_buf;
+}
+
 /* Main REPL loop */
 int repl_run(ReplSession* session) {
     if (!session) return 1;
@@ -1172,17 +1359,45 @@ int repl_run(ReplSession* session) {
 
     /* Main loop */
     while (session->running) {
-        repl_print_prompt(session);
+        char* line;
 
-        char* input = read_input_line();
-        if (input == NULL) {
+        /* Use advanced input if available, otherwise fall back to simple input */
+        if (session->input) {
+            line = input_readline(session->input, build_colored_prompt(session));
+        } else {
+            repl_print_prompt(session);
+            line = read_input_line();
+        }
+
+        if (line == NULL) {
             /* EOF (Ctrl+D) */
-            printf("\n");
             break;
         }
 
-        if (!repl_process_input(session, input)) {
-            break;
+        /* Skip empty input */
+        const char* p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '\0') continue;
+
+        /* Add to input history */
+        if (session->input) {
+            input_history_add(session->input, line);
+        }
+
+        /* Also add to legacy history for compatibility */
+        repl_history_add(session, line);
+        session->command_count++;
+
+        /* Check if it's a slash command */
+        if (is_slash_command(p)) {
+            if (!execute_slash_command(session, p)) {
+                break;
+            }
+        } else {
+            /* Otherwise, treat as natural language */
+            if (!execute_natural_language(session, p)) {
+                break;
+            }
         }
     }
 

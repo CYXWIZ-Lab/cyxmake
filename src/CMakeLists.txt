@@ -6,8 +6,10 @@ set(CYXMAKE_CORE_SOURCES
     core/logger.c
     core/build_executor.c
     core/file_ops.c
+    core/rich_output.c
     context/project_context.c
     context/project_analyzer.c
+    context/project_graph.c
     context/cache_manager.c
 
     # Phase 1: LLM Integration
@@ -15,6 +17,9 @@ set(CYXMAKE_CORE_SOURCES
     llm/prompt_templates.c
     llm/error_analyzer.c
     llm/ai_provider.c
+    llm/ai_build_agent.c
+    llm/smart_agent.c
+    llm/build_intelligence.c
 
     # Phase 1: Error Recovery System
     recovery/error_diagnosis.c
@@ -76,13 +81,15 @@ if(CYXMAKE_USE_SANITIZERS AND NOT MSVC)
     target_link_options(cyxmake_core PRIVATE -fsanitize=address,undefined)
 endif()
 
-# CLI sources (REPL, slash commands, permissions, context)
+# CLI sources (REPL, slash commands, permissions, context, input, planner)
 set(CYXMAKE_CLI_SOURCES
     cli/main.c
     cli/repl.c
     cli/slash_commands.c
     cli/permission.c
     cli/conversation_context.c
+    cli/input.c
+    cli/action_planner.c
 )
 
 # Main executable

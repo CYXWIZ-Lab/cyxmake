@@ -103,6 +103,43 @@ const char* cyxmake_version(void);
  */
 void cyxmake_set_log_level(LogLevel level);
 
+/**
+ * AI-powered autonomous build
+ *
+ * Uses AI to:
+ * 1. Analyze the project structure
+ * 2. Create a step-by-step build plan
+ * 3. Execute the plan
+ * 4. When errors occur, analyze and fix them automatically
+ * 5. Retry until success or max attempts reached
+ *
+ * @param orch Orchestrator instance
+ * @param project_path Path to project root directory
+ * @return Error code
+ */
+CyxMakeError cyxmake_build_autonomous(Orchestrator* orch, const char* project_path);
+
+/**
+ * Get LLM context from orchestrator
+ * @param orch Orchestrator instance
+ * @return LLM context or NULL if AI not enabled
+ */
+LLMContext* cyxmake_get_llm(Orchestrator* orch);
+
+/**
+ * Get tool registry from orchestrator
+ * @param orch Orchestrator instance
+ * @return Tool registry or NULL
+ */
+ToolRegistry* cyxmake_get_tools(Orchestrator* orch);
+
+/**
+ * Check if AI is enabled
+ * @param orch Orchestrator instance
+ * @return true if AI engine is available
+ */
+bool cyxmake_ai_enabled(Orchestrator* orch);
+
 #ifdef __cplusplus
 }
 #endif
