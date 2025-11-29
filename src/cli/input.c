@@ -229,6 +229,20 @@ void input_beep(void) {
 #endif
 }
 
+bool input_is_tty(void) {
+#ifdef _WIN32
+    /* On Windows, check if stdin is a console (not a pipe or file) */
+    HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+    if (h == INVALID_HANDLE_VALUE) return false;
+
+    DWORD mode;
+    /* GetConsoleMode fails if handle is not a console */
+    return GetConsoleMode(h, &mode) != 0;
+#else
+    return isatty(STDIN_FILENO) != 0;
+#endif
+}
+
 bool input_raw_mode_enable(InputContext* ctx) {
     if (!ctx || ctx->raw_mode) return true;
 
@@ -609,7 +623,8 @@ char* input_readline(InputContext* ctx, const char* prompt) {
     }
 
     /* Enter raw mode */
-    if (!input_raw_mode_enable(ctx)) {
+    /* First check if stdin is a TTY - if not, use simple fgets */
+    if (!input_is_tty() || !input_raw_mode_enable(ctx)) {
         /* Fallback to simple fgets */
         if (fgets(ctx->line, INPUT_MAX_LINE, stdin) == NULL) {
             return NULL;

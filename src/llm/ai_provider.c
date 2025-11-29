@@ -1155,7 +1155,13 @@ static AIResponse* parse_openai_response(const char* response_body) {
             content_start++;
             while (*content_start == ' ' || *content_start == '\t') content_start++;
 
-            if (*content_start == '"') {
+            /* Handle null content (common when there are tool calls) */
+            if (strncmp(content_start, "null", 4) == 0) {
+                /* Content is null - OK when there are tool calls */
+                response->content = NULL;
+                /* Don't set success yet - wait for tool_calls check */
+            }
+            else if (*content_start == '"') {
                 content_start++;
                 const char* content_end = content_start;
 

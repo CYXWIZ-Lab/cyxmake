@@ -1032,12 +1032,19 @@ char* agent_run(AutonomousAgent* agent, const char* task) {
             }
         } else {
             /* No tool calls - AI is done */
-            if (response->content) {
+            if (response->content && strlen(response->content) > 0) {
                 final_response = strdup(response->content);
 
                 if (agent->config.verbose) {
                     log_success("Agent completed task");
                 }
+            } else {
+                /* No content and no tool calls - AI gave empty response */
+                if (agent->config.verbose) {
+                    log_warning("AI returned empty response (no content, no tool calls)");
+                }
+                /* Set a default response so we don't loop forever */
+                final_response = strdup("I've completed the task but have no additional information to provide.");
             }
 
             ai_response_free(response);

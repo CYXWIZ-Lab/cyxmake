@@ -184,6 +184,12 @@ void input_beep(void);
  */
 int input_get_terminal_width(void);
 
+/**
+ * Check if stdin is a terminal (TTY)
+ * @return true if stdin is interactive, false if piped/redirected
+ */
+bool input_is_tty(void);
+
 /* ============================================================================
  * Default completion functions
  * ============================================================================ */
