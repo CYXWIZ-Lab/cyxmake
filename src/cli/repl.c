@@ -1311,6 +1311,7 @@ static bool execute_natural_language(ReplSession* session, const char* input) {
                     } else {
                         printf("Autonomous Agent thinking...\n\n");
                     }
+                    fflush(stdout);  /* Ensure message is displayed before blocking call */
 
                     /* Update working directory if changed */
                     agent_set_working_dir(session->autonomous_agent, session->working_dir);
@@ -1348,6 +1349,7 @@ static bool execute_natural_language(ReplSession* session, const char* input) {
                     } else {
                         printf("Asking AI...\n");
                     }
+                    fflush(stdout);  /* Ensure message is displayed before blocking call */
 
                     char* response = ai_provider_query(session->current_provider, input, 1024);
                     if (response) {
