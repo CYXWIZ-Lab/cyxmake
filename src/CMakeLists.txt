@@ -20,6 +20,7 @@ set(CYXMAKE_CORE_SOURCES
     llm/ai_build_agent.c
     llm/smart_agent.c
     llm/build_intelligence.c
+    llm/autonomous_agent.c
 
     # Phase 1: Error Recovery System
     recovery/error_diagnosis.c

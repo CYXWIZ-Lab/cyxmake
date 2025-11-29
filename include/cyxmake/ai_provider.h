@@ -112,6 +112,15 @@ typedef struct {
 } AIMessage;
 
 /**
+ * Tool call from AI
+ */
+typedef struct {
+    char* id;                /* Tool call ID */
+    char* name;              /* Function name */
+    char* arguments;         /* JSON arguments string */
+} AIToolCall;
+
+/**
  * AI completion request
  */
 typedef struct {
@@ -125,6 +134,9 @@ typedef struct {
     /* Optional parameters */
     char* system_prompt;     /* System prompt (added as first message) */
     bool stream;             /* Enable streaming (not yet supported) */
+
+    /* Tool calling support */
+    char* tools_json;        /* JSON array of tool definitions (OpenAI format) */
 } AIRequest;
 
 /**
@@ -134,6 +146,10 @@ typedef struct {
     bool success;            /* Request succeeded */
     char* content;           /* Response content */
     char* error;             /* Error message if failed */
+
+    /* Tool calls (if AI wants to use tools) */
+    AIToolCall* tool_calls;  /* Array of tool calls */
+    int tool_call_count;     /* Number of tool calls */
 
     /* Usage info (if available) */
     int prompt_tokens;

@@ -110,8 +110,12 @@ bool ai_registry_set_default(AIProviderRegistry* registry, const char* name) {
     AIProvider* provider = ai_registry_get(registry, name);
     if (!provider) return false;
 
+    /* Make a copy first to avoid use-after-free if name == registry->default_provider */
+    char* new_default = strdup(name);
+    if (!new_default) return false;
+
     free(registry->default_provider);
-    registry->default_provider = strdup(name);
+    registry->default_provider = new_default;
     return true;
 }
 
@@ -355,7 +359,10 @@ int ai_registry_load_config(AIProviderRegistry* registry, const char* config_pat
 
         /* Add provider to registry */
         if (ai_registry_add(registry, config)) {
-            log_info("Loaded provider: %s (%s)", name, ai_provider_type_to_string(type));
+            log_info("Loaded provider: %s (%s) at %s",
+                     name,
+                     ai_provider_type_to_string(type),
+                     config->base_url ? config->base_url : "default");
             loaded++;
 
             /* Initialize the provider */
@@ -527,6 +534,7 @@ void ai_request_free(AIRequest* request) {
     }
     free(request->messages);
     free(request->system_prompt);
+    free(request->tools_json);
     free(request);
 }
 
@@ -534,6 +542,15 @@ void ai_response_free(AIResponse* response) {
     if (!response) return;
     free(response->content);
     free(response->error);
+
+    /* Free tool calls */
+    for (int i = 0; i < response->tool_call_count; i++) {
+        free(response->tool_calls[i].id);
+        free(response->tool_calls[i].name);
+        free(response->tool_calls[i].arguments);
+    }
+    free(response->tool_calls);
+
     free(response);
 }
 
@@ -925,6 +942,10 @@ static char* build_openai_request_json(AIProvider* provider, const AIRequest* re
     if (request->system_prompt) {
         size += strlen(request->system_prompt) + 100;
     }
+    /* Add space for tools if provided */
+    if (request->tools_json) {
+        size += strlen(request->tools_json) + 100;
+    }
 
     char* json = malloc(size);
     if (!json) return NULL;
@@ -978,10 +999,141 @@ static char* build_openai_request_json(AIProvider* provider, const AIRequest* re
     float temp = request->temperature > 0 ? request->temperature : provider->config.temperature;
 
     offset += snprintf(json + offset, size - offset,
-                       "],\"max_tokens\":%d,\"temperature\":%.2f}",
+                       "],\"max_tokens\":%d,\"temperature\":%.2f",
                        max_tokens, temp);
 
+    /* Add tools if provided */
+    if (request->tools_json) {
+        offset += snprintf(json + offset, size - offset,
+                           ",\"tools\":%s,\"tool_choice\":\"auto\"",
+                           request->tools_json);
+    }
+
+    /* Close JSON object */
+    offset += snprintf(json + offset, size - offset, "}");
+
     return json;
+}
+
+/* Helper to extract JSON string value */
+static char* extract_json_string(const char* json, const char* key) {
+    char search[128];
+    snprintf(search, sizeof(search), "\"%s\":", key);
+
+    const char* start = strstr(json, search);
+    if (!start) return NULL;
+
+    start += strlen(search);
+    while (*start == ' ' || *start == '\t') start++;
+
+    if (*start != '"') return NULL;
+    start++;
+
+    const char* end = start;
+    while (*end && !(*end == '"' && *(end - 1) != '\\')) {
+        end++;
+    }
+
+    size_t len = end - start;
+    char* result = malloc(len + 1);
+    if (!result) return NULL;
+
+    /* Unescape */
+    size_t j = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (start[i] == '\\' && i + 1 < len) {
+            i++;
+            switch (start[i]) {
+                case 'n': result[j++] = '\n'; break;
+                case 't': result[j++] = '\t'; break;
+                case 'r': result[j++] = '\r'; break;
+                case '"': result[j++] = '"'; break;
+                case '\\': result[j++] = '\\'; break;
+                default: result[j++] = start[i]; break;
+            }
+        } else {
+            result[j++] = start[i];
+        }
+    }
+    result[j] = '\0';
+    return result;
+}
+
+/* Parse tool_calls from OpenAI response */
+static void parse_tool_calls(AIResponse* response, const char* response_body) {
+    const char* tool_calls_start = strstr(response_body, "\"tool_calls\":");
+    if (!tool_calls_start) return;
+
+    tool_calls_start = strchr(tool_calls_start, '[');
+    if (!tool_calls_start) return;
+
+    /* Count tool calls by counting occurrences of "id" within tool_calls array */
+    int count = 0;
+    const char* p = tool_calls_start;
+    int bracket_depth = 0;
+    while (*p) {
+        if (*p == '[') bracket_depth++;
+        else if (*p == ']') {
+            bracket_depth--;
+            if (bracket_depth == 0) break;
+        }
+        else if (*p == '"' && strncmp(p, "\"id\":", 5) == 0) count++;
+        p++;
+    }
+
+    if (count == 0) return;
+
+    response->tool_calls = calloc(count, sizeof(AIToolCall));
+    if (!response->tool_calls) return;
+
+    /* Parse each tool call */
+    p = tool_calls_start;
+    int idx = 0;
+    while (*p && idx < count) {
+        const char* obj_start = strchr(p, '{');
+        if (!obj_start) break;
+
+        /* Find matching closing brace */
+        const char* obj_end = obj_start + 1;
+        int brace_depth = 1;
+        while (*obj_end && brace_depth > 0) {
+            if (*obj_end == '{') brace_depth++;
+            else if (*obj_end == '}') brace_depth--;
+            obj_end++;
+        }
+
+        /* Extract this tool call object */
+        size_t obj_len = obj_end - obj_start;
+        char* obj_str = malloc(obj_len + 1);
+        if (!obj_str) break;
+        strncpy(obj_str, obj_start, obj_len);
+        obj_str[obj_len] = '\0';
+
+        /* Extract id */
+        response->tool_calls[idx].id = extract_json_string(obj_str, "id");
+
+        /* Extract function.name and function.arguments */
+        const char* func_start = strstr(obj_str, "\"function\":");
+        if (func_start) {
+            response->tool_calls[idx].name = extract_json_string(func_start, "name");
+            response->tool_calls[idx].arguments = extract_json_string(func_start, "arguments");
+        }
+
+        free(obj_str);
+
+        if (response->tool_calls[idx].id || response->tool_calls[idx].name) {
+            idx++;
+        }
+
+        p = obj_end;
+    }
+
+    response->tool_call_count = idx;
+
+    /* If we have tool calls, mark as success even without content */
+    if (response->tool_call_count > 0) {
+        response->success = true;
+    }
 }
 
 /* Parse OpenAI API response */
@@ -1038,8 +1190,11 @@ static AIResponse* parse_openai_response(const char* response_body) {
         }
     }
 
+    /* Parse tool_calls if present */
+    parse_tool_calls(response, response_body);
+
     /* Check for error */
-    if (!response->success) {
+    if (!response->success && response->tool_call_count == 0) {
         const char* error_start = strstr(response_body, "\"error\":");
         if (error_start) {
             const char* msg_start = strstr(error_start, "\"message\":");

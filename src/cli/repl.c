@@ -20,9 +20,11 @@
 #include "cyxmake/smart_agent.h"
 #include "cyxmake/project_graph.h"
 #include "cyxmake/project_context.h"
+#include "cyxmake/autonomous_agent.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 #ifdef _WIN32
 #include <io.h>
@@ -166,6 +168,11 @@ ReplSession* repl_session_create(const ReplConfig* config, Orchestrator* orch) {
             log_debug("Loaded %d AI providers from config", loaded);
             /* Set current provider to default */
             session->current_provider = ai_registry_get_default(session->ai_registry);
+            if (session->current_provider) {
+                log_info("Using AI provider: %s at %s",
+                         session->current_provider->config.name,
+                         session->current_provider->config.base_url);
+            }
         } else {
             /* No config, try to create from environment */
             AIProvider* env_provider = ai_provider_from_env();
@@ -218,6 +225,21 @@ ReplSession* repl_session_create(const ReplConfig* config, Orchestrator* orch) {
         }
     }
 
+    /* Initialize Autonomous Agent for tool-using AI */
+    if (session->current_provider) {
+        AgentConfig agent_cfg = agent_config_default();
+        agent_cfg.verbose = session->config.verbose;
+        agent_cfg.working_dir = session->working_dir;
+        agent_cfg.max_iterations = 20;  /* Allow more steps for complex tasks */
+        agent_cfg.require_approval = false;  /* Auto-approve for now */
+
+        session->autonomous_agent = agent_create(session->current_provider, &agent_cfg);
+        if (session->autonomous_agent) {
+            /* Note: builtin tools are already registered in agent_create() */
+            log_debug("Autonomous Agent initialized with tool use support");
+        }
+    }
+
     session->running = true;
     session->command_count = 0;
 
@@ -266,6 +288,9 @@ void repl_session_free(ReplSession* session) {
 
     /* Free Project Graph */
     project_graph_free(session->project_graph);
+
+    /* Free Autonomous Agent */
+    agent_free(session->autonomous_agent);
 
     /* Note: Don't free orchestrator - it may be shared */
 
@@ -757,6 +782,69 @@ static bool execute_natural_language(ReplSession* session, const char* input) {
                                   CTX_INTENT_OTHER, resolved_target, true);
     }
 
+    /* Check if this is a complex multi-step task that should use autonomous agent */
+    bool is_complex_task = false;
+    const char* complex_keywords[] = {
+        "and then", "and also", "after that", "first", "second", "next",
+        "step by step", "explore", "analyze", "understand", "figure out",
+        "find out", "investigate", "discover", "learn about", "tell me about",
+        "create a project", "set up", "initialize new", "scaffold",
+        NULL
+    };
+
+    /* Check for complex task indicators */
+    char* input_lower = strdup(input);
+    if (input_lower) {
+        for (char* p = input_lower; *p; p++) *p = tolower((unsigned char)*p);
+
+        for (int i = 0; complex_keywords[i]; i++) {
+            if (strstr(input_lower, complex_keywords[i])) {
+                is_complex_task = true;
+                break;
+            }
+        }
+        /* Also consider input length - longer requests are likely complex */
+        if (strlen(input) > 80) {
+            is_complex_task = true;
+        }
+        free(input_lower);
+    }
+
+    /* Route complex tasks directly to autonomous agent */
+    if (is_complex_task && session->autonomous_agent) {
+        if (session->config.colors_enabled) {
+            printf("%s%s Complex task detected - using Autonomous Agent...%s\n\n",
+                   COLOR_DIM, SYM_BULLET, COLOR_RESET);
+        } else {
+            printf("Complex task detected - using Autonomous Agent...\n\n");
+        }
+
+        agent_set_working_dir(session->autonomous_agent, session->working_dir);
+        char* result = agent_run(session->autonomous_agent, input);
+
+        if (result) {
+            strip_non_ascii(result);
+            printf("\n%s%s%s\n", COLOR_GREEN, result, COLOR_RESET);
+
+            if (session->conversation) {
+                conversation_add_message(session->conversation, MSG_ROLE_ASSISTANT,
+                                          result, CTX_INTENT_OTHER, NULL, true);
+            }
+            free(result);
+        } else {
+            const char* error = agent_get_error(session->autonomous_agent);
+            if (error) {
+                printf("%sAgent error: %s%s\n", COLOR_RED, error, COLOR_RESET);
+            } else {
+                printf("%sAgent could not complete the task.%s\n", COLOR_YELLOW, COLOR_RESET);
+            }
+        }
+
+        agent_clear_history(session->autonomous_agent);
+        free(resolved_target);
+        return true;
+    }
+
     /* Try Smart Agent for intent understanding if available */
     SmartIntent* smart_intent = NULL;
     if (session->smart_agent) {
@@ -1048,52 +1136,66 @@ static bool execute_natural_language(ReplSession* session, const char* input) {
             break;
 
         case INTENT_EXPLAIN:
-            if (session->llm && llm_is_ready(session->llm)) {
-                /* Get conversation context */
-                char* context_str = NULL;
-                const char* current_file = NULL;
-                if (session->conversation) {
-                    context_str = conversation_get_context_string(session->conversation, 5);
-                    current_file = conversation_get_current_file(session->conversation);
-                }
+            {
+                /* Check if any AI is available (local LLM or cloud provider) */
+                bool ai_available = (session->llm && llm_is_ready(session->llm)) ||
+                                    (session->current_provider && ai_provider_is_ready(session->current_provider));
 
-                /* Generate prompt */
-                char* prompt = prompt_explain_with_context(
-                    cmd->details ? cmd->details : input,
-                    current_file,
-                    NULL,  /* file content - could read if needed */
-                    context_str
-                );
-
-                if (prompt) {
-                    if (session->config.colors_enabled) {
-                        printf("%sThinking...%s\n", COLOR_DIM, COLOR_RESET);
-                    } else {
-                        printf("Thinking...\n");
+                if (ai_available) {
+                    /* Get conversation context */
+                    char* context_str = NULL;
+                    const char* current_file = NULL;
+                    if (session->conversation) {
+                        context_str = conversation_get_context_string(session->conversation, 5);
+                        current_file = conversation_get_current_file(session->conversation);
                     }
 
-                    char* response = llm_query_simple(session->llm, prompt, 512);
-                    if (response) {
-                        printf("\n%s\n", response);
+                    /* Generate prompt */
+                    char* prompt = prompt_explain_with_context(
+                        cmd->details ? cmd->details : input,
+                        current_file,
+                        NULL,  /* file content - could read if needed */
+                        context_str
+                    );
 
-                        /* Add to conversation */
-                        if (session->conversation) {
-                            conversation_add_message(session->conversation, MSG_ROLE_ASSISTANT,
-                                                      response, CTX_INTENT_EXPLAIN, NULL, true);
+                    if (prompt) {
+                        if (session->config.colors_enabled) {
+                            printf("%sThinking...%s\n", COLOR_DIM, COLOR_RESET);
+                        } else {
+                            printf("Thinking...\n");
                         }
-                        free(response);
-                    } else {
-                        printf("AI could not generate a response.\n");
+
+                        char* response = NULL;
+
+                        /* Use cloud provider if available, otherwise local LLM */
+                        if (session->current_provider && ai_provider_is_ready(session->current_provider)) {
+                            response = ai_provider_query(session->current_provider, prompt, 1024);
+                        } else if (session->llm && llm_is_ready(session->llm)) {
+                            response = llm_query_simple(session->llm, prompt, 512);
+                        }
+
+                        if (response) {
+                            printf("\n%s\n", response);
+
+                            /* Add to conversation */
+                            if (session->conversation) {
+                                conversation_add_message(session->conversation, MSG_ROLE_ASSISTANT,
+                                                          response, CTX_INTENT_EXPLAIN, NULL, true);
+                            }
+                            free(response);
+                        } else {
+                            printf("AI could not generate a response.\n");
+                        }
+                        free(prompt);
                     }
-                    free(prompt);
-                }
-                free(context_str);
-            } else {
-                if (session->config.colors_enabled) {
-                    printf("%s%s AI not available%s\n", COLOR_YELLOW, SYM_WARN, COLOR_RESET);
-                    printf("%sTo enable AI, load a model with test-llm command%s\n", COLOR_DIM, COLOR_RESET);
+                    free(context_str);
                 } else {
-                    printf("AI not available. Load a model to enable AI features.\n");
+                    if (session->config.colors_enabled) {
+                        printf("%s%s AI not available%s\n", COLOR_YELLOW, SYM_WARN, COLOR_RESET);
+                        printf("%sTo enable AI, configure a provider in cyxmake.toml%s\n", COLOR_DIM, COLOR_RESET);
+                    } else {
+                        printf("AI not available. Configure a provider in cyxmake.toml.\n");
+                    }
                 }
             }
             break;
@@ -1129,7 +1231,11 @@ static bool execute_natural_language(ReplSession* session, const char* input) {
                     break;
                 }
 
-                if (session->llm && llm_is_ready(session->llm)) {
+                /* Check if any AI is available */
+                bool ai_available = (session->llm && llm_is_ready(session->llm)) ||
+                                    (session->current_provider && ai_provider_is_ready(session->current_provider));
+
+                if (ai_available) {
                     /* Get conversation context */
                     char* context_str = NULL;
                     if (session->conversation) {
@@ -1151,7 +1257,15 @@ static bool execute_natural_language(ReplSession* session, const char* input) {
                             printf("Analyzing error...\n");
                         }
 
-                        char* response = llm_query_simple(session->llm, prompt, 512);
+                        char* response = NULL;
+
+                        /* Use cloud provider if available, otherwise local LLM */
+                        if (session->current_provider && ai_provider_is_ready(session->current_provider)) {
+                            response = ai_provider_query(session->current_provider, prompt, 1024);
+                        } else if (session->llm && llm_is_ready(session->llm)) {
+                            response = llm_query_simple(session->llm, prompt, 512);
+                        }
+
                         if (response) {
                             if (session->config.colors_enabled) {
                                 printf("\n%sSuggested fix:%s\n", COLOR_CYAN, COLOR_RESET);
@@ -1189,107 +1303,68 @@ static bool execute_natural_language(ReplSession* session, const char* input) {
 
         case INTENT_UNKNOWN:
         default:
-            /* Check if AI is available via new provider system or legacy LLM */
+            /* Use Autonomous Agent for complex tasks that require tool use */
             {
-                bool ai_available = false;
-
-                /* Check new multi-provider system first */
-                if (session->current_provider && ai_provider_is_ready(session->current_provider)) {
-                    ai_available = true;
-                }
-                /* Fall back to legacy LLM system */
-                else if (session->llm && llm_is_ready(session->llm)) {
-                    ai_available = true;
-                }
-
-                if (ai_available) {
+                if (session->autonomous_agent) {
                     if (session->config.colors_enabled) {
-                        printf("%sAsking AI agent...%s\n", COLOR_DIM, COLOR_RESET);
+                        printf("%sAutonomous Agent thinking...%s\n\n", COLOR_DIM, COLOR_RESET);
                     } else {
-                        printf("Asking AI agent...\n");
+                        printf("Autonomous Agent thinking...\n\n");
                     }
 
-                    /* Get conversation context */
-                    char* context_str = NULL;
-                    const char* current_file = NULL;
-                    const char* last_error = NULL;
+                    /* Update working directory if changed */
+                    agent_set_working_dir(session->autonomous_agent, session->working_dir);
 
-                    if (session->conversation) {
-                        context_str = conversation_get_context_string(session->conversation, 5);
-                        current_file = conversation_get_current_file(session->conversation);
-                        last_error = conversation_get_last_error(session->conversation);
-                    }
+                    /* Run the autonomous agent on the task */
+                    char* result = agent_run(session->autonomous_agent, input);
 
-                    /* Generate AI agent prompt */
-                    char* prompt = prompt_ai_agent(
-                        input,
-                        session->working_dir,
-                        current_file,
-                        last_error,
-                        context_str
-                    );
+                    if (result) {
+                        /* Display the result */
+                        strip_non_ascii(result);
+                        printf("\n%s%s%s\n", COLOR_GREEN, result, COLOR_RESET);
 
-                    if (prompt) {
-                        char* ai_response = NULL;
-
-                        /* Use new provider system if available */
-                        if (session->current_provider && ai_provider_is_ready(session->current_provider)) {
-                            /* Build message array */
-                            AIMessage msg = {0};
-                            msg.role = AI_ROLE_USER;
-                            msg.content = prompt;
-
-                            AIRequest req = {0};
-                            req.messages = &msg;
-                            req.message_count = 1;
-                            req.max_tokens = 1024;
-                            req.temperature = 0.7f;
-
-                            AIResponse* resp = ai_provider_complete(session->current_provider, &req);
-                            if (resp) {
-                                if (resp->success && resp->content) {
-                                    ai_response = strdup(resp->content);
-                                } else if (resp->error) {
-                                    printf("%sAI Error: %s%s\n", COLOR_RED, resp->error, COLOR_RESET);
-                                }
-                            }
-                            ai_response_free(resp);
+                        /* Add to conversation */
+                        if (session->conversation) {
+                            conversation_add_message(session->conversation, MSG_ROLE_ASSISTANT,
+                                                      result, CTX_INTENT_OTHER, NULL, true);
                         }
-                        /* Fall back to legacy LLM */
-                        else if (session->llm) {
-                            ai_response = llm_query_simple(session->llm, prompt, 1024);
-                        }
-
-                        if (ai_response) {
-                            /* Parse the AI response */
-                            AIAgentResponse* agent_response = parse_ai_agent_response(ai_response);
-
-                            if (agent_response) {
-                                /* Execute the AI agent's actions */
-                                execute_ai_agent_response(session, agent_response);
-
-                                /* Add to conversation */
-                                if (session->conversation && agent_response->message) {
-                                    conversation_add_message(session->conversation, MSG_ROLE_ASSISTANT,
-                                                              agent_response->message, CTX_INTENT_OTHER,
-                                                              NULL, true);
-                                }
-
-                                ai_agent_response_free(agent_response);
-                            } else {
-                                /* Couldn't parse response, show raw */
-                                strip_non_ascii(ai_response);
-                                printf("\n%s\n", ai_response);
-                            }
-                            free(ai_response);
+                        free(result);
+                    } else {
+                        const char* error = agent_get_error(session->autonomous_agent);
+                        if (error) {
+                            printf("%sAgent error: %s%s\n", COLOR_RED, error, COLOR_RESET);
                         } else {
-                            printf("AI did not respond.\n");
+                            printf("%sAgent could not complete the task.%s\n", COLOR_YELLOW, COLOR_RESET);
                         }
-                        free(prompt);
                     }
-                    free(context_str);
-                } else {
-                    /* No AI available */
+
+                    /* Clear history for next task */
+                    agent_clear_history(session->autonomous_agent);
+                }
+                /* Fall back to simple AI query if no autonomous agent */
+                else if (session->current_provider && ai_provider_is_ready(session->current_provider)) {
+                    if (session->config.colors_enabled) {
+                        printf("%sAsking AI...%s\n", COLOR_DIM, COLOR_RESET);
+                    } else {
+                        printf("Asking AI...\n");
+                    }
+
+                    char* response = ai_provider_query(session->current_provider, input, 1024);
+                    if (response) {
+                        strip_non_ascii(response);
+                        printf("\n%s\n", response);
+
+                        if (session->conversation) {
+                            conversation_add_message(session->conversation, MSG_ROLE_ASSISTANT,
+                                                      response, CTX_INTENT_OTHER, NULL, true);
+                        }
+                        free(response);
+                    } else {
+                        printf("AI did not respond.\n");
+                    }
+                }
+                /* No AI available */
+                else {
                     if (session->config.colors_enabled) {
                         printf("%s%s I didn't understand that.%s\n",
                                COLOR_YELLOW, SYM_WARN, COLOR_RESET);

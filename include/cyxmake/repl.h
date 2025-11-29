@@ -58,6 +58,11 @@ typedef struct SmartAgent SmartAgent;
 typedef struct ProjectGraph ProjectGraph;
 #endif
 
+#ifndef CYXMAKE_AUTONOMOUS_AGENT_FWD
+#define CYXMAKE_AUTONOMOUS_AGENT_FWD
+typedef struct AutonomousAgent AutonomousAgent;
+#endif
+
 /**
  * REPL configuration
  */
@@ -83,6 +88,7 @@ typedef struct ReplSession {
     InputContext* input;                 /* Line editing context */
     SmartAgent* smart_agent;             /* Intelligent reasoning agent */
     ProjectGraph* project_graph;         /* Project dependency graph */
+    AutonomousAgent* autonomous_agent;   /* True autonomous agent with tool use */
 
     /* Session state */
     bool running;
