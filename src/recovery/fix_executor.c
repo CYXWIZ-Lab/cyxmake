@@ -5,10 +5,12 @@
 
 #include "cyxmake/error_recovery.h"
 #include "cyxmake/tool_executor.h"
+#include "cyxmake/permission.h"
 #include "cyxmake/logger.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <ctype.h>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -508,4 +510,125 @@ int fix_execute_all_with_tools(FixAction** actions, size_t count,
                                 const ProjectContext* ctx,
                                 const ToolRegistry* registry) {
     return fix_execute_all_internal(actions, count, ctx, registry);
+}
+
+/* Map FixActionType to ActionType for permission system */
+static ActionType fix_to_permission_action(FixActionType type) {
+    switch (type) {
+        case FIX_ACTION_INSTALL_PACKAGE:
+            return ACTION_INSTALL_PKG;
+        case FIX_ACTION_CREATE_FILE:
+            return ACTION_CREATE_FILE;
+        case FIX_ACTION_MODIFY_FILE:
+            return ACTION_MODIFY_FILE;
+        case FIX_ACTION_SET_ENV_VAR:
+            return ACTION_SYSTEM_MODIFY;
+        case FIX_ACTION_RUN_COMMAND:
+            return ACTION_RUN_COMMAND;
+        case FIX_ACTION_CLEAN_BUILD:
+            return ACTION_CLEAN;
+        case FIX_ACTION_FIX_CMAKE_VERSION:
+            return ACTION_MODIFY_FILE;
+        case FIX_ACTION_RETRY:
+        case FIX_ACTION_NONE:
+        default:
+            return ACTION_RUN_COMMAND;
+    }
+}
+
+/* Execute fix action with REPL permission system */
+bool fix_execute_with_permission(const FixAction* action,
+                                  const ProjectContext* ctx,
+                                  const ToolRegistry* registry,
+                                  PermissionContext* permissions) {
+    if (!action) return false;
+
+    /* If no permission context, fall back to standard execution */
+    if (!permissions) {
+        return fix_execute_internal(action, ctx, registry);
+    }
+
+    /* Determine permission action type */
+    ActionType perm_action = fix_to_permission_action(action->type);
+    const char* target = action->target ? action->target : action->description;
+
+    /* Check permission using REPL's permission system */
+    if (!permission_check(permissions, perm_action, target, action->description)) {
+        log_warning("Fix denied by user: %s", action->description);
+        return false;
+    }
+
+    /* Execute the fix (skip internal confirmation since we already got permission) */
+    log_info("Applying fix: %s", action->description);
+
+    bool success = false;
+
+    switch (action->type) {
+        case FIX_ACTION_INSTALL_PACKAGE:
+            if (registry && action->target) {
+                success = install_package_with_registry(action->target, registry);
+            } else if (action->command) {
+                success = install_package_legacy(action->command, action->target);
+            } else {
+                log_error("No package name or command specified");
+                success = false;
+            }
+            break;
+
+        case FIX_ACTION_CREATE_FILE:
+            success = create_file(action->target, action->value);
+            break;
+
+        case FIX_ACTION_MODIFY_FILE:
+            if (file_exists(action->target)) {
+                success = append_to_file(action->target, action->value);
+            } else {
+                success = create_file(action->target, action->value);
+            }
+            break;
+
+        case FIX_ACTION_SET_ENV_VAR:
+            success = set_environment_var(action->target, action->value);
+            break;
+
+        case FIX_ACTION_RUN_COMMAND:
+            success = execute_command(action->command);
+            break;
+
+        case FIX_ACTION_CLEAN_BUILD:
+            success = clean_build(ctx);
+            break;
+
+        case FIX_ACTION_FIX_CMAKE_VERSION:
+            if (action->target && action->value) {
+                success = fix_cmake_version(action->target, action->value);
+            } else {
+                log_error("Missing target file or version for CMake fix");
+                success = false;
+            }
+            break;
+
+        case FIX_ACTION_RETRY:
+            log_info("Retry requested - will attempt rebuild");
+            success = true;
+            break;
+
+        case FIX_ACTION_NONE:
+            log_warning("No automated fix available - manual intervention required");
+            success = false;
+            break;
+
+        default:
+            log_error("Unknown fix action type: %d", action->type);
+            success = false;
+            break;
+    }
+
+    if (success) {
+        log_success("Fix applied successfully");
+    } else {
+        log_error("Failed to apply fix");
+    }
+
+    return success;
 }

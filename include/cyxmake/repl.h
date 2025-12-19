@@ -63,6 +63,11 @@ typedef struct ProjectGraph ProjectGraph;
 typedef struct AutonomousAgent AutonomousAgent;
 #endif
 
+#ifndef CYXMAKE_RECOVERY_CONTEXT_FWD
+#define CYXMAKE_RECOVERY_CONTEXT_FWD
+typedef struct RecoveryContext RecoveryContext;
+#endif
+
 /**
  * REPL configuration
  */
@@ -89,6 +94,7 @@ typedef struct ReplSession {
     SmartAgent* smart_agent;             /* Intelligent reasoning agent */
     ProjectGraph* project_graph;         /* Project dependency graph */
     AutonomousAgent* autonomous_agent;   /* True autonomous agent with tool use */
+    RecoveryContext* recovery_ctx;       /* Error recovery context */
 
     /* Session state */
     bool running;

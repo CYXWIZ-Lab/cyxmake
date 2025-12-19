@@ -287,6 +287,12 @@ CyxMakeError cyxmake_build(Orchestrator* orch, const char* project_path) {
             if (total_attempts > 0) {
                 log_info("Recovery stats: %d attempt(s), %d successful",
                         total_attempts, successful_recoveries);
+
+                /* Invalidate cache if fixes were applied */
+                if (successful_recoveries > 0) {
+                    cache_invalidate(project_path);
+                    log_debug("Cache invalidated after successful recovery");
+                }
             }
 
             recovery_context_free(recovery_ctx);

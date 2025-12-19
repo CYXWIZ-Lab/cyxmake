@@ -14,6 +14,10 @@
 #include "cyxmake/project_graph.h"
 #include "cyxmake/project_context.h"
 #include "cyxmake/smart_agent.h"
+#include "cyxmake/error_recovery.h"
+#include "cyxmake/cache_manager.h"
+#include "cyxmake/action_planner.h"
+#include "cyxmake/tool_executor.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,6 +51,25 @@
 #define SYM_WARN    "[!]"
 #define SYM_ARROW   "->"
 
+/* Helper to convert ErrorPatternType to string */
+static const char* error_pattern_type_name(ErrorPatternType type) {
+    switch (type) {
+        case ERROR_PATTERN_MISSING_FILE:       return "Missing File";
+        case ERROR_PATTERN_MISSING_LIBRARY:    return "Missing Library";
+        case ERROR_PATTERN_MISSING_HEADER:     return "Missing Header";
+        case ERROR_PATTERN_PERMISSION_DENIED:  return "Permission Denied";
+        case ERROR_PATTERN_DISK_FULL:          return "Disk Full";
+        case ERROR_PATTERN_SYNTAX_ERROR:       return "Syntax Error";
+        case ERROR_PATTERN_UNDEFINED_REFERENCE: return "Undefined Reference";
+        case ERROR_PATTERN_VERSION_MISMATCH:   return "Version Mismatch";
+        case ERROR_PATTERN_CMAKE_VERSION:      return "CMake Version";
+        case ERROR_PATTERN_NETWORK_ERROR:      return "Network Error";
+        case ERROR_PATTERN_TIMEOUT:            return "Timeout";
+        case ERROR_PATTERN_UNKNOWN:
+        default:                               return "Unknown";
+    }
+}
+
 /* Slash command definitions */
 static const SlashCommand slash_commands[] = {
     {"help",    "h",    "Show available commands",      cmd_help},
@@ -64,6 +87,8 @@ static const SlashCommand slash_commands[] = {
     {"ai",      NULL,   "AI status and commands",       cmd_ai},
     {"graph",   "g",    "Analyze project dependencies", cmd_graph},
     {"memory",  "m",    "Show/manage agent memory",     cmd_memory},
+    {"recover", "r",    "Attempt to fix last error",    cmd_recover},
+    {"fix",     NULL,   "Attempt to fix last error",    cmd_recover},
     {NULL, NULL, NULL, NULL}
 };
 
@@ -560,6 +585,33 @@ bool cmd_build(ReplSession* session, const char* args) {
         /* Store last error for potential "fix" commands */
         free(session->last_error);
         session->last_error = build_output ? strdup(build_output) : strdup("Build failed");
+
+        /* Record in conversation context */
+        if (session->conversation) {
+            conversation_set_error(session->conversation,
+                                   session->last_error, "build", NULL, 0);
+        }
+
+        /* Offer automatic recovery if AI/tools available */
+        bool has_recovery = (session->llm && llm_is_ready(session->llm)) ||
+                            (session->current_provider && ai_provider_is_ready(session->current_provider)) ||
+                            (session->orchestrator && cyxmake_get_tools(session->orchestrator));
+
+        if (has_recovery) {
+            if (session->config.colors_enabled) {
+                printf("\n%sWould you like to attempt automatic recovery? [y/N]: %s",
+                       COLOR_CYAN, COLOR_RESET);
+            } else {
+                printf("\nWould you like to attempt automatic recovery? [y/N]: ");
+            }
+            fflush(stdout);
+
+            char response[16] = {0};
+            if (fgets(response, sizeof(response), stdin) != NULL &&
+                (response[0] == 'y' || response[0] == 'Y')) {
+                cmd_recover(session, NULL);
+            }
+        }
     }
 
     free(build_output);
@@ -1601,5 +1653,252 @@ bool cmd_memory(ReplSession* session, const char* args) {
     }
 
     printf("\n");
+    return true;
+}
+
+/* /recover command - attempt to fix last error */
+bool cmd_recover(ReplSession* session, const char* args) {
+    (void)args;
+    bool colors = session->config.colors_enabled;
+
+    /* Get last error from conversation context or session */
+    const char* last_error = NULL;
+    if (session->conversation) {
+        last_error = conversation_get_last_error(session->conversation);
+    }
+    if (!last_error && session->last_error) {
+        last_error = session->last_error;
+    }
+
+    if (!last_error) {
+        if (colors) {
+            printf("%s%s No error to recover from%s\n", COLOR_YELLOW, SYM_WARN, COLOR_RESET);
+            printf("%sRun /build first or specify an error%s\n", COLOR_DIM, COLOR_RESET);
+        } else {
+            printf("%s No error to recover from\n", SYM_WARN);
+            printf("Run /build first or specify an error\n");
+        }
+        return true;
+    }
+
+    if (colors) {
+        printf("\n%s%s=== Error Recovery ===%s\n\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
+    } else {
+        printf("\n=== Error Recovery ===\n\n");
+    }
+
+    /* Get or create project context */
+    ProjectContext* project_ctx = NULL;
+    if (session->working_dir) {
+        project_ctx = cache_load(session->working_dir);
+        if (!project_ctx) {
+            project_ctx = project_analyze(session->working_dir, NULL);
+        }
+    }
+
+    if (!project_ctx) {
+        if (colors) {
+            printf("%s%s Could not analyze project context%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+        } else {
+            printf("%s Could not analyze project context\n", SYM_CROSS);
+        }
+        return true;
+    }
+
+    /* Create mock build result from stored error */
+    BuildResult mock_result = {
+        .success = false,
+        .exit_code = 1,
+        .stderr_output = (char*)last_error,
+        .stdout_output = NULL
+    };
+
+    /* Get LLM context if available */
+    LLMContext* llm = session->llm;
+    if (!llm && session->orchestrator) {
+        llm = cyxmake_get_llm(session->orchestrator);
+    }
+
+    /* Diagnose the error */
+    ErrorDiagnosis* diagnosis = NULL;
+    if (llm && llm_is_ready(llm)) {
+        if (colors) {
+            printf("%sUsing AI for error analysis...%s\n", COLOR_DIM, COLOR_RESET);
+        }
+        diagnosis = error_diagnose_with_llm(&mock_result, project_ctx, llm);
+    } else {
+        diagnosis = error_diagnose(&mock_result, project_ctx);
+    }
+
+    if (!diagnosis) {
+        if (colors) {
+            printf("%s%s Could not diagnose error%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+        } else {
+            printf("%s Could not diagnose error\n", SYM_CROSS);
+        }
+        project_context_free(project_ctx);
+        return true;
+    }
+
+    /* Display diagnosis */
+    if (colors) {
+        printf("%sDiagnosis:%s %s\n", COLOR_YELLOW, COLOR_RESET, diagnosis->diagnosis);
+        printf("%sConfidence:%s %.0f%%\n", COLOR_YELLOW, COLOR_RESET,
+               diagnosis->confidence * 100);
+        printf("%sError Type:%s %s\n\n", COLOR_YELLOW, COLOR_RESET,
+               error_pattern_type_name(diagnosis->pattern_type));
+    } else {
+        printf("Diagnosis: %s\n", diagnosis->diagnosis);
+        printf("Confidence: %.0f%%\n", diagnosis->confidence * 100);
+        printf("Error Type: %s\n\n", error_pattern_type_name(diagnosis->pattern_type));
+    }
+
+    if (diagnosis->fix_count == 0) {
+        if (colors) {
+            printf("%s%s No automated fixes available%s\n", COLOR_YELLOW, SYM_WARN, COLOR_RESET);
+            printf("%sManual intervention may be required%s\n", COLOR_DIM, COLOR_RESET);
+        } else {
+            printf("%s No automated fixes available\n", SYM_WARN);
+            printf("Manual intervention may be required\n");
+        }
+        error_diagnosis_free(diagnosis);
+        project_context_free(project_ctx);
+        return true;
+    }
+
+    /* Display proposed fixes */
+    if (colors) {
+        printf("%s%sProposed Fixes:%s\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
+    } else {
+        printf("Proposed Fixes:\n");
+    }
+
+    for (size_t i = 0; i < diagnosis->fix_count; i++) {
+        FixAction* fix = diagnosis->suggested_fixes[i];
+        if (!fix) continue;
+
+        if (colors) {
+            printf("  %s%zu.%s %s%s%s\n", COLOR_GREEN, i + 1, COLOR_RESET,
+                   COLOR_CYAN, fix->description, COLOR_RESET);
+            if (fix->command) {
+                printf("      %sCommand: %s%s\n", COLOR_DIM, fix->command, COLOR_RESET);
+            }
+            if (fix->target) {
+                printf("      %sTarget: %s%s\n", COLOR_DIM, fix->target, COLOR_RESET);
+            }
+        } else {
+            printf("  %zu. %s\n", i + 1, fix->description);
+            if (fix->command) {
+                printf("      Command: %s\n", fix->command);
+            }
+            if (fix->target) {
+                printf("      Target: %s\n", fix->target);
+            }
+        }
+    }
+    printf("\n");
+
+    /* Ask for approval */
+    if (colors) {
+        printf("%sApply these fixes? [Y/n]: %s", COLOR_CYAN, COLOR_RESET);
+    } else {
+        printf("Apply these fixes? [Y/n]: ");
+    }
+    fflush(stdout);
+
+    char response[16] = {0};
+    if (fgets(response, sizeof(response), stdin) == NULL) {
+        response[0] = 'n';
+    }
+
+    /* Default to 'yes' if just enter pressed */
+    if (response[0] == '\n' || response[0] == '\0' ||
+        response[0] == 'y' || response[0] == 'Y') {
+
+        /* Get tool registry */
+        ToolRegistry* tools = NULL;
+        if (session->orchestrator) {
+            tools = cyxmake_get_tools(session->orchestrator);
+        }
+
+        /* Execute fixes */
+        int successful = 0;
+        for (size_t i = 0; i < diagnosis->fix_count; i++) {
+            FixAction* fix = diagnosis->suggested_fixes[i];
+            if (!fix) continue;
+
+            if (colors) {
+                printf("\n%s%s%s Applying fix %zu: %s%s\n",
+                       COLOR_BLUE, SYM_ARROW, COLOR_RESET,
+                       i + 1, fix->description, COLOR_RESET);
+            } else {
+                printf("\n%s Applying fix %zu: %s\n", SYM_ARROW, i + 1, fix->description);
+            }
+
+            bool result = false;
+            if (session->permissions) {
+                result = fix_execute_with_permission(fix, project_ctx, tools, session->permissions);
+            } else {
+                result = fix_execute_with_tools(fix, project_ctx, tools);
+            }
+
+            if (result) {
+                successful++;
+                if (colors) {
+                    printf("  %s%s Fix applied successfully%s\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET);
+                } else {
+                    printf("  %s Fix applied successfully\n", SYM_CHECK);
+                }
+            } else {
+                if (colors) {
+                    printf("  %s%s Fix failed%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+                } else {
+                    printf("  %s Fix failed\n", SYM_CROSS);
+                }
+            }
+        }
+
+        /* Invalidate cache after fixes */
+        if (successful > 0 && session->working_dir) {
+            cache_invalidate(session->working_dir);
+        }
+
+        /* Summary */
+        printf("\n");
+        if (colors) {
+            if (successful > 0) {
+                printf("%s%s Applied %d of %zu fixes successfully%s\n",
+                       COLOR_GREEN, SYM_CHECK, successful, diagnosis->fix_count, COLOR_RESET);
+                printf("%sTip: Run /build to retry the build%s\n", COLOR_DIM, COLOR_RESET);
+            } else {
+                printf("%s%s No fixes were applied%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+            }
+        } else {
+            if (successful > 0) {
+                printf("%s Applied %d of %zu fixes successfully\n", SYM_CHECK, successful, diagnosis->fix_count);
+                printf("Tip: Run /build to retry the build\n");
+            } else {
+                printf("%s No fixes were applied\n", SYM_CROSS);
+            }
+        }
+
+        /* Record in conversation */
+        if (session->conversation && successful > 0) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Applied %d fix(es) for: %s",
+                     successful, error_pattern_type_name(diagnosis->pattern_type));
+            conversation_add_message(session->conversation, MSG_ROLE_SYSTEM,
+                                      msg, CTX_INTENT_BUILD, NULL, true);
+        }
+    } else {
+        if (colors) {
+            printf("%sFixes cancelled%s\n", COLOR_DIM, COLOR_RESET);
+        } else {
+            printf("Fixes cancelled\n");
+        }
+    }
+
+    error_diagnosis_free(diagnosis);
+    project_context_free(project_ctx);
     return true;
 }

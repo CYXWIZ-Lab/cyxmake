@@ -21,6 +21,8 @@
 #include "cyxmake/project_graph.h"
 #include "cyxmake/project_context.h"
 #include "cyxmake/autonomous_agent.h"
+#include "cyxmake/error_recovery.h"
+#include "cyxmake/cache_manager.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -240,6 +242,32 @@ ReplSession* repl_session_create(const ReplConfig* config, Orchestrator* orch) {
         }
     }
 
+    /* Initialize Error Recovery Context */
+    {
+        RecoveryStrategy strategy = {
+            .max_retries = 3,
+            .retry_delay_ms = 1000,
+            .backoff_multiplier = 2.0f,
+            .max_delay_ms = 30000,
+            .use_ai_analysis = (session->current_provider != NULL || session->llm != NULL),
+            .auto_apply_fixes = false  /* Require permission in REPL mode */
+        };
+        session->recovery_ctx = recovery_context_create(&strategy);
+        if (session->recovery_ctx) {
+            /* Wire up LLM if available */
+            if (session->llm) {
+                recovery_set_llm(session->recovery_ctx, session->llm);
+            }
+            /* Wire up tool registry if available */
+            ToolRegistry* tools = session->orchestrator ?
+                                  cyxmake_get_tools(session->orchestrator) : NULL;
+            if (tools) {
+                recovery_set_tools(session->recovery_ctx, tools);
+            }
+            log_debug("Error Recovery context initialized");
+        }
+    }
+
     session->running = true;
     session->command_count = 0;
 
@@ -291,6 +319,9 @@ void repl_session_free(ReplSession* session) {
 
     /* Free Autonomous Agent */
     agent_free(session->autonomous_agent);
+
+    /* Free Error Recovery Context */
+    recovery_context_free(session->recovery_ctx);
 
     /* Note: Don't free orchestrator - it may be shared */
 

@@ -33,6 +33,9 @@ set(CYXMAKE_CORE_SOURCES
     tools/tool_discovery.c
     tools/tool_executor.c
 
+    # Phase 2: Permission System (shared between core and CLI)
+    cli/permission.c
+
     # TODO Phase 1: Add remaining files when implemented
     # core/config.c
     # context/change_detector.c

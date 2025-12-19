@@ -207,6 +207,30 @@ bool fix_execute_with_tools(const FixAction* action,
                             const ProjectContext* ctx,
                             const ToolRegistry* registry);
 
+/* Forward declaration for PermissionContext */
+#ifndef CYXMAKE_PERMISSION_CONTEXT_FWD
+#define CYXMAKE_PERMISSION_CONTEXT_FWD
+typedef struct PermissionContext PermissionContext;
+#endif
+
+/**
+ * Execute fix action with REPL permission system
+ *
+ * Uses the permission context from the REPL session instead of
+ * the simple ask_confirmation() approach. This integrates error
+ * recovery with the REPL's interactive approval workflow.
+ *
+ * @param action Fix action to execute
+ * @param ctx Project context
+ * @param registry Tool registry (optional)
+ * @param permissions Permission context from REPL (required)
+ * @return True if fix was applied successfully
+ */
+bool fix_execute_with_permission(const FixAction* action,
+                                  const ProjectContext* ctx,
+                                  const ToolRegistry* registry,
+                                  PermissionContext* permissions);
+
 /**
  * Execute all fix actions in sequence
  * @param actions Array of fix actions

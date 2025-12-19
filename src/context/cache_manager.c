@@ -468,3 +468,67 @@ bool cache_is_stale(const ProjectContext* ctx, const char* project_root) {
     /* Cache older than 24 hours is stale */
     return age_seconds > (24 * 60 * 60);
 }
+
+/* Invalidate cache after successful fix */
+bool cache_invalidate(const char* project_root) {
+    if (!project_root) return false;
+
+    /* Load existing cache */
+    ProjectContext* ctx = cache_load(project_root);
+    if (!ctx) {
+        /* No cache to invalidate - that's fine */
+        log_debug("No cache to invalidate for: %s", project_root);
+        return true;
+    }
+
+    /* Set updated_at to 0 to force staleness check to fail */
+    ctx->updated_at = 0;
+
+    bool result = cache_save(ctx, project_root);
+    project_context_free(ctx);
+
+    if (result) {
+        log_info("Cache invalidated for: %s", project_root);
+    } else {
+        log_error("Failed to invalidate cache for: %s", project_root);
+    }
+
+    return result;
+}
+
+/* Update dependency installation status in cache */
+bool cache_mark_dependency_installed(const char* project_root, const char* dep_name) {
+    if (!project_root || !dep_name) return false;
+
+    ProjectContext* ctx = cache_load(project_root);
+    if (!ctx) {
+        log_warning("No cache found to update dependency: %s", dep_name);
+        return false;
+    }
+
+    /* Find and update dependency status */
+    bool found = false;
+    for (size_t i = 0; i < ctx->dependency_count; i++) {
+        if (ctx->dependencies[i] && ctx->dependencies[i]->name &&
+            strcmp(ctx->dependencies[i]->name, dep_name) == 0) {
+            ctx->dependencies[i]->is_installed = true;
+            log_debug("Marked dependency as installed: %s", dep_name);
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        log_debug("Dependency not found in cache: %s (invalidating cache)", dep_name);
+        /* Dependency not tracked - invalidate entire cache */
+        ctx->updated_at = 0;
+    }
+
+    /* Update timestamp */
+    ctx->updated_at = time(NULL);
+
+    bool result = cache_save(ctx, project_root);
+    project_context_free(ctx);
+
+    return result;
+}

@@ -72,6 +72,7 @@ bool cmd_auto(ReplSession* session, const char* args);
 bool cmd_think(ReplSession* session, const char* args);
 bool cmd_graph(ReplSession* session, const char* args);
 bool cmd_memory(ReplSession* session, const char* args);
+bool cmd_recover(ReplSession* session, const char* args);
 
 #ifdef __cplusplus
 }

@@ -65,6 +65,31 @@ char* cache_get_path(const char* project_root);
  */
 bool cache_is_stale(const ProjectContext* ctx, const char* project_root);
 
+/**
+ * Invalidate cache after successful fix
+ *
+ * Marks cache as stale so the next operation will re-analyze
+ * the project. Use this after applying fixes that change
+ * project structure or dependencies.
+ *
+ * @param project_root Root directory of the project
+ * @return true on success, false on failure
+ */
+bool cache_invalidate(const char* project_root);
+
+/**
+ * Update dependency installation status in cache
+ *
+ * Updates a specific dependency's is_installed flag without
+ * invalidating the entire cache. Use after successfully
+ * installing a package.
+ *
+ * @param project_root Root directory of the project
+ * @param dep_name Dependency name that was installed
+ * @return true on success, false on failure
+ */
+bool cache_mark_dependency_installed(const char* project_root, const char* dep_name);
+
 #ifdef __cplusplus
 }
 #endif
