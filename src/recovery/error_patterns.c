@@ -128,8 +128,16 @@ static const char* timeout_patterns[] = {
     NULL
 };
 
-/* Error pattern database */
+/* Error pattern database - ordered by priority (higher priority first) */
 static ErrorPattern pattern_database[] = {
+    {
+        .type = ERROR_PATTERN_MISSING_HEADER,
+        .name = "Missing Header",
+        .patterns = missing_header_patterns,
+        .pattern_count = 5,
+        .description = "A required header file is not found",
+        .priority = 11  /* Check before MISSING_FILE since header errors also contain "No such file" */
+    },
     {
         .type = ERROR_PATTERN_MISSING_FILE,
         .name = "Missing File",
@@ -144,14 +152,6 @@ static ErrorPattern pattern_database[] = {
         .patterns = missing_library_patterns,
         .pattern_count = 7,
         .description = "A required library is not installed or not found",
-        .priority = 9
-    },
-    {
-        .type = ERROR_PATTERN_MISSING_HEADER,
-        .name = "Missing Header",
-        .patterns = missing_header_patterns,
-        .pattern_count = 5,
-        .description = "A required header file is not found",
         .priority = 9
     },
     {
@@ -407,11 +407,15 @@ char* extract_error_detail(const char* error_output, ErrorPatternType type) {
         }
 
         case ERROR_PATTERN_MISSING_HEADER: {
-            /* Try to extract header name */
-            const char* start = strchr(error_output, '<');
+            /* Try to extract header name from various formats */
+            const char* start = NULL;
+            const char* end = NULL;
+
+            /* Try angle brackets first: <header.h> */
+            start = strchr(error_output, '<');
             if (start) {
                 start++;
-                const char* end = strchr(start, '>');
+                end = strchr(start, '>');
                 if (end) {
                     size_t len = end - start;
                     if (len > 0 && len < sizeof(buffer)) {
@@ -420,12 +424,31 @@ char* extract_error_detail(const char* error_output, ErrorPatternType type) {
                         detail = strdup(buffer);
                     }
                 }
-            } else {
-                /* Try quotes */
+            }
+
+            if (!detail) {
+                /* Try double quotes: "header.h" */
                 start = strchr(error_output, '"');
                 if (start) {
                     start++;
-                    const char* end = strchr(start, '"');
+                    end = strchr(start, '"');
+                    if (end) {
+                        size_t len = end - start;
+                        if (len > 0 && len < sizeof(buffer)) {
+                            memcpy(buffer, start, len);
+                            buffer[len] = '\0';
+                            detail = strdup(buffer);
+                        }
+                    }
+                }
+            }
+
+            if (!detail) {
+                /* Try single quotes (MSVC format): 'header.h' */
+                start = strchr(error_output, '\'');
+                if (start) {
+                    start++;
+                    end = strchr(start, '\'');
                     if (end) {
                         size_t len = end - start;
                         if (len > 0 && len < sizeof(buffer)) {
