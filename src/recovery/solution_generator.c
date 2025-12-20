@@ -216,17 +216,20 @@ static FixAction** generate_missing_library_fixes(const char* library_name,
 
     int count = 0;
 
+    /* Use a default name if library_name is NULL */
+    const char* lib_name = library_name ? library_name : "unknown";
+
     /* Get canonical package name for tool registry */
-    const char* canonical_pkg = get_canonical_package_name(library_name);
+    const char* canonical_pkg = get_canonical_package_name(lib_name);
 
     /* Fix 1: Install the package */
     /* Note: When tool registry is available, it uses 'target' field (canonical name)
      * When falling back to legacy system(), it uses 'command' field */
-    char* install_cmd = get_install_command(library_name, ctx);
+    char* install_cmd = get_install_command(lib_name, ctx);
     if (install_cmd) {
         char* desc = malloc(256);
         if (desc) {
-            snprintf(desc, 256, "Install %s library", library_name);
+            snprintf(desc, 256, "Install %s library", lib_name);
             fixes[count++] = create_fix_action(
                 FIX_ACTION_INSTALL_PACKAGE,
                 desc,
@@ -242,7 +245,7 @@ static FixAction** generate_missing_library_fixes(const char* library_name,
 
     /* Fix 2: Add to CMakeLists.txt if using CMake */
     if (ctx && ctx->build_system.type == BUILD_CMAKE) {
-        char* cmake_code = generate_cmake_find(library_name);
+        char* cmake_code = generate_cmake_find(lib_name);
         fixes[count++] = create_fix_action(
             FIX_ACTION_MODIFY_FILE,
             "Add library to CMakeLists.txt",
@@ -257,7 +260,7 @@ static FixAction** generate_missing_library_fixes(const char* library_name,
     /* Fix 3: Set library path */
     char* path_desc = malloc(256);
     if (path_desc) {
-        snprintf(path_desc, 256, "Set %s library path", library_name);
+        snprintf(path_desc, 256, "Set %s library path", lib_name);
         fixes[count++] = create_fix_action(
             FIX_ACTION_SET_ENV_VAR,
             path_desc,

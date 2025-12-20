@@ -387,8 +387,10 @@ char* extract_error_detail(const char* error_output, ErrorPatternType type) {
                     buffer[len] = '\0';
                     detail = strdup(buffer);
                 }
-            } else {
-                /* Try "undefined reference to" */
+            }
+
+            if (!detail) {
+                /* Try "undefined reference to" (GCC/Clang) */
                 p = strstr(error_output, "undefined reference to");
                 if (p) {
                     p += strlen("undefined reference to");
@@ -400,6 +402,50 @@ char* extract_error_detail(const char* error_output, ErrorPatternType type) {
                         memcpy(buffer, p, len);
                         buffer[len] = '\0';
                         detail = strdup(buffer);
+                    }
+                }
+            }
+
+            if (!detail) {
+                /* Try "unresolved external symbol" (MSVC) */
+                /* Format: unresolved external symbol "void __cdecl funcname(void)" */
+                p = strstr(error_output, "unresolved external symbol");
+                if (p) {
+                    p += strlen("unresolved external symbol");
+                    /* Skip whitespace and opening quote */
+                    while (*p == ' ' || *p == '"') p++;
+                    /* Skip return type and calling convention (void __cdecl, int, etc.) */
+                    /* Look for the actual symbol name which is before '(' or '@' */
+                    const char* sym_start = p;
+                    const char* sym_end = NULL;
+
+                    /* Find the opening parenthesis or mangled name marker */
+                    const char* paren = strchr(p, '(');
+                    const char* at = strchr(p, '@');  /* MSVC name mangling */
+
+                    if (paren) {
+                        /* Walk back from '(' to find start of symbol name */
+                        sym_end = paren;
+                        sym_start = paren - 1;
+                        while (sym_start > p && *sym_start != ' ' && *sym_start != ':') {
+                            sym_start--;
+                        }
+                        if (*sym_start == ' ' || *sym_start == ':') sym_start++;
+                    } else if (at) {
+                        /* Mangled name like ?funcname@@... */
+                        if (*p == '?') {
+                            sym_start = p + 1;
+                            sym_end = at;
+                        }
+                    }
+
+                    if (sym_start && sym_end && sym_end > sym_start) {
+                        size_t len = sym_end - sym_start;
+                        if (len > 0 && len < sizeof(buffer)) {
+                            memcpy(buffer, sym_start, len);
+                            buffer[len] = '\0';
+                            detail = strdup(buffer);
+                        }
                     }
                 }
             }
