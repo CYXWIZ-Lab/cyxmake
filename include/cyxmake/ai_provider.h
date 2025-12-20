@@ -21,6 +21,9 @@
 extern "C" {
 #endif
 
+/* Forward declaration for llama.cpp context */
+typedef struct LLMContext LLMContext;
+
 /* ========================================================================
  * Provider Types
  * ======================================================================== */

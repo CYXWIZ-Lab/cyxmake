@@ -12,6 +12,8 @@
 #include "cyxmake/ai_provider.h"
 #include "cyxmake/tool_executor.h"
 #include "cyxmake/ai_build_agent.h"
+#include "cyxmake/config.h"
+#include "cyxmake/project_generator.h"
 #include "cyxmake/logger.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -19,7 +21,7 @@
 
 /* AI-enabled orchestrator structure */
 struct Orchestrator {
-    Config* config;
+    Config* config;              /* Loaded configuration */
     LLMContext* llm;
     AIProviderRegistry* ai_registry;
     AIProvider* default_ai;
@@ -40,7 +42,14 @@ Orchestrator* cyxmake_init(const char* config_path) {
         return NULL;
     }
 
-    (void)config_path;  /* TODO: Load configuration from file */
+    /* Load configuration from file */
+    orch->config = config_load(config_path);
+    if (orch->config) {
+        config_apply_logging(orch->config);
+        if (orch->config->loaded) {
+            log_info("Loaded configuration from: %s", orch->config->config_path);
+        }
+    }
 
     /* Set default recovery strategy */
     orch->recovery_strategy = (RecoveryStrategy){
@@ -181,7 +190,11 @@ void cyxmake_shutdown(Orchestrator* orch) {
         orch->tool_registry = NULL;
     }
 
-    /* TODO: Free config when implemented */
+    /* Free config */
+    if (orch->config) {
+        config_free(orch->config);
+        orch->config = NULL;
+    }
 
     free(orch);
 }
@@ -328,15 +341,51 @@ CyxMakeError cyxmake_create_project(Orchestrator* orch,
         return CYXMAKE_ERROR_INVALID_ARG;
     }
 
-    printf("Creating project from description: %s\n", description);
-    printf("Output path: %s\n", output_path);
-    printf("TODO: Implement project generation\n");
-    printf("- Parse natural language description\n");
-    printf("- Generate project structure\n");
-    printf("- Create build files\n");
-    printf("- Generate README\n");
+    log_info("Creating project from description: %s", description);
+    log_info("Output path: %s", output_path);
 
-    return CYXMAKE_SUCCESS;
+    /* Parse the natural language description */
+    ProjectSpec* spec = project_spec_parse(description);
+    if (!spec) {
+        log_error("Failed to parse project description");
+        return CYXMAKE_ERROR_INTERNAL;
+    }
+
+    /* Log what we detected */
+    log_info("Detected language: %s", language_to_string(spec->language));
+    log_info("Project type: %s",
+             spec->type == PROJECT_GAME ? "Game" :
+             spec->type == PROJECT_LIBRARY ? "Library" :
+             spec->type == PROJECT_CLI ? "CLI" :
+             spec->type == PROJECT_WEB ? "Web" :
+             spec->type == PROJECT_GUI ? "GUI" : "Executable");
+
+    if (spec->dependency_count > 0) {
+        log_info("Dependencies detected: %d", spec->dependency_count);
+        for (int i = 0; i < spec->dependency_count; i++) {
+            log_debug("  - %s", spec->dependencies[i]);
+        }
+    }
+
+    /* Generate the project */
+    GenerationResult* result = project_generate(spec, output_path);
+
+    /* Cleanup spec */
+    project_spec_free(spec);
+
+    if (!result) {
+        log_error("Failed to generate project");
+        return CYXMAKE_ERROR_INTERNAL;
+    }
+
+    CyxMakeError err = result->success ? CYXMAKE_SUCCESS : CYXMAKE_ERROR_INTERNAL;
+
+    if (!result->success && result->error_message) {
+        log_error("Generation error: %s", result->error_message);
+    }
+
+    generation_result_free(result);
+    return err;
 }
 
 void cyxmake_set_log_level(LogLevel level) {

@@ -7,6 +7,8 @@ set(CYXMAKE_CORE_SOURCES
     core/build_executor.c
     core/file_ops.c
     core/rich_output.c
+    core/config.c
+    core/project_generator.c
     context/project_context.c
     context/project_analyzer.c
     context/project_graph.c
