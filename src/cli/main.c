@@ -30,7 +30,7 @@ static void print_help(const char* program_name) {
     log_plain("  init              Initialize project (analyze and create cache)\n");
     log_plain("  build             Build the project with AI error recovery\n");
     log_plain("  auto              AI-first autonomous build (AI plans & executes)\n");
-    log_plain("  create            Create new project from natural language\n");
+    log_plain("  create <desc> [path]  Create new project from description\n");
     log_plain("  doctor            Check project health\n");
     log_plain("  status            Show project and AI status\n");
     log_plain("  clean             Clean build artifacts\n");
@@ -63,7 +63,7 @@ static void print_help(const char* program_name) {
     log_plain("  %s build                   # Build with AI recovery\n", program_name);
     log_plain("  %s build --no-ai           # Build without AI\n", program_name);
     log_plain("  %s build --auto-fix        # Build with auto-fix enabled\n", program_name);
-    log_plain("  %s create \"C++ game engine\" # Create new project\n", program_name);
+    log_plain("  %s create \"C++ game engine\" my_game  # Create in my_game/\n", program_name);
     log_plain("\n");
     log_plain("Natural Language:\n");
     log_plain("  You can also use plain English commands:\n");
@@ -180,11 +180,14 @@ int main(int argc, char** argv) {
     else if (strcmp(command, "create") == 0) {
         if (argc < 3) {
             log_error("'create' command requires a description");
-            log_info("Example: cyxmake create \"C++ project with SDL2\"");
+            log_info("Usage: cyxmake create \"description\" [output_path]");
+            log_info("Example: cyxmake create \"C++ project with SDL2\" my_project");
             err = CYXMAKE_ERROR_INVALID_ARG;
         } else {
+            const char* description = argv[2];
+            const char* output_path = (argc >= 4) ? argv[3] : ".";
             log_info("Creating project from description...");
-            err = cyxmake_create_project(orch, argv[2], ".");
+            err = cyxmake_create_project(orch, description, output_path);
             if (err == CYXMAKE_SUCCESS) {
                 log_plain("\n");
                 log_success("Project created successfully");
