@@ -61,6 +61,22 @@ static void test_error_patterns(void) {
     assert(type == ERROR_PATTERN_PERMISSION_DENIED);
     log_success("Matched permission denied pattern");
 
+    /* Test CMake find_package error */
+    const char* cmake_pkg_error =
+        "CMake Error at CMakeLists.txt:4 (find_package):\n"
+        "  By not providing \"FindSDL2.cmake\" in CMAKE_MODULE_PATH this project has\n"
+        "  asked CMake to find a package configuration file provided by \"SDL2\", but\n"
+        "  CMake did not find one.\n"
+        "\n"
+        "  Could not find a package configuration file provided by \"SDL2\" with any of\n"
+        "  the following names:\n"
+        "\n"
+        "    SDL2Config.cmake\n"
+        "    sdl2-config.cmake\n";
+    type = error_patterns_match(cmake_pkg_error);
+    assert(type == ERROR_PATTERN_CMAKE_PACKAGE);
+    log_success("Matched CMake package not found pattern");
+
     /* Test unknown pattern */
     const char* unknown_error = "some random error message";
     type = error_patterns_match(unknown_error);
@@ -132,6 +148,28 @@ static void test_solution_generation(void) {
     assert(fixes != NULL);
     assert(fix_count > 0);
     log_success("Generated %zu fixes for disk full", fix_count);
+
+    fix_actions_free(fixes, fix_count);
+
+    /* Test generating fixes for CMake package not found */
+    fixes = solution_generate(ERROR_PATTERN_CMAKE_PACKAGE,
+                              "SDL2", ctx, &fix_count);
+
+    assert(fixes != NULL);
+    assert(fix_count > 0);
+    log_success("Generated %zu fixes for CMake package not found", fix_count);
+
+    /* Verify fix types include package install */
+    has_install = false;
+    for (size_t i = 0; i < fix_count; i++) {
+        if (fixes[i]->type == FIX_ACTION_INSTALL_PACKAGE) {
+            has_install = true;
+        }
+        log_info("  Fix %zu: %s", i + 1, fixes[i]->description);
+    }
+
+    assert(has_install == true);
+    log_success("CMake package fix types validated");
 
     fix_actions_free(fixes, fix_count);
 

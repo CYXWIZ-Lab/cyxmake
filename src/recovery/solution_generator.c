@@ -577,6 +577,85 @@ static FixAction** generate_cmake_version_fixes(const char* min_version,
     return fixes;
 }
 
+/* Generate fix actions for CMake find_package errors */
+static FixAction** generate_cmake_package_fixes(const char* package_name,
+                                                 const ProjectContext* ctx,
+                                                 size_t* fix_count) {
+    FixAction** fixes = calloc(4, sizeof(FixAction*));
+    if (!fixes) {
+        *fix_count = 0;
+        return NULL;
+    }
+
+    int count = 0;
+
+    /* Use a default name if package_name is NULL */
+    const char* pkg_name = package_name ? package_name : "unknown";
+
+    /* Get canonical package name for tool registry */
+    const char* canonical_pkg = get_canonical_package_name(pkg_name);
+
+    /* Fix 1: Install the package via vcpkg (Windows) or system package manager */
+    char* install_cmd = get_install_command(pkg_name, ctx);
+    if (install_cmd) {
+        char desc[256];
+        snprintf(desc, sizeof(desc), "Install %s package", pkg_name);
+        fixes[count++] = create_fix_action(
+            FIX_ACTION_INSTALL_PACKAGE,
+            desc,
+            install_cmd,        /* Legacy command for fallback */
+            canonical_pkg,      /* Canonical name for tool registry */
+            NULL,
+            true
+        );
+        free(install_cmd);
+    }
+
+    /* Fix 2: Suggest CMAKE_PREFIX_PATH if package might be installed elsewhere */
+    char cmake_hint[512];
+#ifdef _WIN32
+    snprintf(cmake_hint, sizeof(cmake_hint),
+             "set CMAKE_PREFIX_PATH=C:\\vcpkg\\installed\\x64-windows;%%CMAKE_PREFIX_PATH%%");
+#else
+    snprintf(cmake_hint, sizeof(cmake_hint),
+             "export CMAKE_PREFIX_PATH=/usr/local:$CMAKE_PREFIX_PATH");
+#endif
+    char hint_desc[256];
+    snprintf(hint_desc, sizeof(hint_desc),
+             "Set CMAKE_PREFIX_PATH to help CMake find %s", pkg_name);
+    fixes[count++] = create_fix_action(
+        FIX_ACTION_SET_ENV_VAR,
+        hint_desc,
+        cmake_hint,
+        "CMAKE_PREFIX_PATH",
+        NULL,
+        true
+    );
+
+    /* Fix 3: Clean build and reconfigure */
+    fixes[count++] = create_fix_action(
+        FIX_ACTION_CLEAN_BUILD,
+        "Clean build directory and reconfigure CMake",
+        "rm -rf build/CMakeCache.txt build/CMakeFiles",
+        NULL,
+        NULL,
+        false
+    );
+
+    /* Fix 4: Retry after install */
+    fixes[count++] = create_fix_action(
+        FIX_ACTION_RETRY,
+        "Retry build after installing package",
+        NULL,
+        NULL,
+        NULL,
+        false
+    );
+
+    *fix_count = count;
+    return fixes;
+}
+
 /* Main solution generation function */
 FixAction** solution_generate(ErrorPatternType pattern_type,
                               const char* error_details,
@@ -591,6 +670,9 @@ FixAction** solution_generate(ErrorPatternType pattern_type,
     switch (pattern_type) {
         case ERROR_PATTERN_CMAKE_VERSION:
             return generate_cmake_version_fixes(error_details, ctx, fix_count);
+
+        case ERROR_PATTERN_CMAKE_PACKAGE:
+            return generate_cmake_package_fixes(error_details, ctx, fix_count);
 
         case ERROR_PATTERN_MISSING_LIBRARY:
             return generate_missing_library_fixes(error_details, ctx, fix_count);

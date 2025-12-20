@@ -29,6 +29,7 @@ typedef enum {
     ERROR_PATTERN_UNDEFINED_REFERENCE,
     ERROR_PATTERN_VERSION_MISMATCH,
     ERROR_PATTERN_CMAKE_VERSION,          /* CMake minimum version compatibility */
+    ERROR_PATTERN_CMAKE_PACKAGE,          /* CMake find_package() failure */
     ERROR_PATTERN_NETWORK_ERROR,
     ERROR_PATTERN_TIMEOUT,
     ERROR_PATTERN_UNKNOWN

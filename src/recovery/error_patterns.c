@@ -108,6 +108,18 @@ static const char* cmake_version_patterns[] = {
     NULL
 };
 
+/* Pattern definitions for CMake find_package errors */
+static const char* cmake_package_patterns[] = {
+    "Could not find a package configuration file",
+    "find_package could not find",
+    "Could not find a configuration file for package",
+    "package configuration file provided by",
+    "Config.cmake",
+    "-config.cmake",
+    "not provide a package configuration file",
+    NULL
+};
+
 /* Pattern definitions for network errors */
 static const char* network_error_patterns[] = {
     "Connection refused",
@@ -201,6 +213,14 @@ static ErrorPattern pattern_database[] = {
         .pattern_count = 6,
         .description = "CMake minimum version needs to be updated",
         .priority = 10  /* High priority - easily fixable */
+    },
+    {
+        .type = ERROR_PATTERN_CMAKE_PACKAGE,
+        .name = "CMake Package Not Found",
+        .patterns = cmake_package_patterns,
+        .pattern_count = 7,
+        .description = "CMake find_package() could not locate a required package",
+        .priority = 12  /* Higher than MISSING_FILE to avoid misclassification */
     },
     {
         .type = ERROR_PATTERN_NETWORK_ERROR,
@@ -558,6 +578,61 @@ char* extract_error_detail(const char* error_output, ErrorPatternType type) {
                 if (p) {
                     /* Just return the filename for now */
                     detail = strdup("CMakeLists.txt");
+                }
+            }
+            break;
+        }
+
+        case ERROR_PATTERN_CMAKE_PACKAGE: {
+            /* Try to extract the package name from CMake find_package error */
+            /* Pattern: 'provided by "SDL2"' or 'Could not find a configuration file for package "SDL2"' */
+            const char* p = strstr(error_output, "provided by \"");
+            if (p) {
+                p += strlen("provided by \"");
+                const char* end = strchr(p, '"');
+                if (end) {
+                    size_t len = end - p;
+                    if (len > 0 && len < sizeof(buffer)) {
+                        memcpy(buffer, p, len);
+                        buffer[len] = '\0';
+                        detail = strdup(buffer);
+                    }
+                }
+            }
+
+            if (!detail) {
+                /* Try alternate pattern: 'for package "PackageName"' */
+                p = strstr(error_output, "for package \"");
+                if (p) {
+                    p += strlen("for package \"");
+                    const char* end = strchr(p, '"');
+                    if (end) {
+                        size_t len = end - p;
+                        if (len > 0 && len < sizeof(buffer)) {
+                            memcpy(buffer, p, len);
+                            buffer[len] = '\0';
+                            detail = strdup(buffer);
+                        }
+                    }
+                }
+            }
+
+            if (!detail) {
+                /* Try extracting from "PackageNameConfig.cmake" pattern */
+                p = strstr(error_output, "Config.cmake");
+                if (p) {
+                    /* Walk back to find package name */
+                    const char* start = p - 1;
+                    while (start > error_output && *start != ' ' && *start != '\n' && *start != '/') {
+                        start--;
+                    }
+                    if (*start == ' ' || *start == '\n' || *start == '/') start++;
+                    size_t len = p - start;
+                    if (len > 0 && len < sizeof(buffer)) {
+                        memcpy(buffer, start, len);
+                        buffer[len] = '\0';
+                        detail = strdup(buffer);
+                    }
                 }
             }
             break;
