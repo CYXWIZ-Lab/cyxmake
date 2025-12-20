@@ -336,7 +336,7 @@ char* generate_cmake_content(const ProjectSpec* spec) {
         "cmake_minimum_required(VERSION 3.16)\n"
         "project(%s LANGUAGES %s)\n\n"
         "set(%s %s)\n"
-        "set(%s_STANDARD_REQUIRED ON)\n\n",
+        "set(%s_REQUIRED ON)\n\n",
         spec->name, cmake_lang, std_var, lang_std, std_var);
 
     /* Add dependencies */
