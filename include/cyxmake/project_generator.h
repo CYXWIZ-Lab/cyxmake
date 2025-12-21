@@ -137,6 +137,20 @@ char* generate_cargo_content(const ProjectSpec* spec);
 char* generate_package_json_content(const ProjectSpec* spec);
 
 /**
+ * Generate pyproject.toml content (for Python projects)
+ * @param spec Project specification
+ * @return Allocated string with pyproject.toml content (caller must free)
+ */
+char* generate_pyproject_content(const ProjectSpec* spec);
+
+/**
+ * Generate go.mod content (for Go projects)
+ * @param spec Project specification
+ * @return Allocated string with go.mod content (caller must free)
+ */
+char* generate_go_mod_content(const ProjectSpec* spec);
+
+/**
  * Generate main source file content
  * @param spec Project specification
  * @return Allocated string with source content (caller must free)

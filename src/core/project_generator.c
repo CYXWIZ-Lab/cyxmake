@@ -156,6 +156,67 @@ void project_spec_free(ProjectSpec* spec) {
     free(spec);
 }
 
+/* Helper to sanitize project name */
+static char* sanitize_project_name(const char* raw) {
+    if (!raw) return strdup("my_project");
+
+    /* Skip leading whitespace */
+    while (*raw && isspace(*raw)) raw++;
+    if (!*raw) return strdup("my_project");
+
+    /* Find end of word (alphanumeric, underscore, hyphen) */
+    const char* end = raw;
+    while (*end && (isalnum(*end) || *end == '_' || *end == '-')) {
+        end++;
+    }
+
+    size_t len = end - raw;
+    if (len == 0) return strdup("my_project");
+    if (len > 64) len = 64;  /* Limit name length */
+
+    char* name = malloc(len + 1);
+    if (!name) return strdup("my_project");
+
+    /* Copy and convert to lowercase, spaces to underscores */
+    for (size_t i = 0; i < len; i++) {
+        char c = raw[i];
+        if (c == ' ' || c == '-') {
+            name[i] = '_';
+        } else {
+            name[i] = (char)tolower(c);
+        }
+    }
+    name[len] = '\0';
+
+    return name;
+}
+
+/* Extract project name from description patterns like "called X" or "named X" */
+static char* extract_project_name(const char* description) {
+    if (!description) return strdup("my_project");
+
+    /* Patterns to look for */
+    const char* patterns[] = {
+        " called ", " named ", " name ", NULL
+    };
+
+    char* lower = str_tolower(description);
+    if (!lower) return strdup("my_project");
+
+    for (int i = 0; patterns[i]; i++) {
+        char* pos = strstr(lower, patterns[i]);
+        if (pos) {
+            /* Calculate offset in original string */
+            size_t offset = pos - lower + strlen(patterns[i]);
+            free(lower);
+            return sanitize_project_name(description + offset);
+        }
+    }
+
+    free(lower);
+    return strdup("my_project");
+}
+
 /* Keyword patterns for parsing */
 static const char* cpp_keywords[] = {"c++", "cpp", "cxx", NULL};
 static const char* c_keywords[] = {"pure c", " c ", "in c", NULL};
@@ -293,8 +354,8 @@ type_done:
     spec->with_tests = str_contains(description, "test");
     spec->with_docs = str_contains(description, "doc");
 
-    /* Extract project name (simple: use first word or "my_project") */
-    spec->name = strdup("my_project");
+    /* Extract project name from description */
+    spec->name = extract_project_name(description);
 
     /* Detect C++ standard */
     if (str_contains(description, "c++20") || str_contains(description, "cpp20")) {
@@ -438,6 +499,54 @@ char* generate_package_json_content(const ProjectSpec* spec) {
         main_file,
         main_file,
         spec->license ? spec->license : "MIT");
+
+    return content;
+}
+
+char* generate_pyproject_content(const ProjectSpec* spec) {
+    if (!spec) return NULL;
+
+    char* content = malloc(2048);
+    if (!content) return NULL;
+
+    int written = snprintf(content, 2048,
+        "[project]\n"
+        "name = \"%s\"\n"
+        "version = \"0.1.0\"\n"
+        "description = \"%s\"\n"
+        "requires-python = \">=3.8\"\n"
+        "dependencies = [\n",
+        spec->name,
+        spec->description ? spec->description : "");
+
+    /* Add dependencies */
+    for (int i = 0; i < spec->dependency_count; i++) {
+        written += snprintf(content + written, 2048 - written,
+            "    \"%s\",\n", spec->dependencies[i]);
+    }
+
+    written += snprintf(content + written, 2048 - written,
+        "]\n\n"
+        "[project.scripts]\n"
+        "%s = \"%s:main\"\n\n"
+        "[build-system]\n"
+        "requires = [\"setuptools>=61.0\"]\n"
+        "build-backend = \"setuptools.build_meta\"\n",
+        spec->name, spec->name);
+
+    return content;
+}
+
+char* generate_go_mod_content(const ProjectSpec* spec) {
+    if (!spec) return NULL;
+
+    char* content = malloc(512);
+    if (!content) return NULL;
+
+    snprintf(content, 512,
+        "module %s\n\n"
+        "go 1.21\n",
+        spec->name);
 
     return content;
 }
@@ -741,6 +850,18 @@ GenerationResult* project_generate(const ProjectSpec* spec, const char* output_p
         case BUILD_NPM:
             build_file = path_join(output_path, "package.json");
             build_content = generate_package_json_content(spec);
+            break;
+        case BUILD_SETUPTOOLS:
+        case BUILD_POETRY:
+            build_file = path_join(output_path, "pyproject.toml");
+            build_content = generate_pyproject_content(spec);
+            break;
+        case BUILD_CUSTOM:
+            /* Go uses go.mod */
+            if (spec->language == LANG_GO) {
+                build_file = path_join(output_path, "go.mod");
+                build_content = generate_go_mod_content(spec);
+            }
             break;
         default:
             break;

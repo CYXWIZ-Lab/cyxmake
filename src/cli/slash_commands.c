@@ -18,6 +18,7 @@
 #include "cyxmake/cache_manager.h"
 #include "cyxmake/action_planner.h"
 #include "cyxmake/tool_executor.h"
+#include "cyxmake/project_generator.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,6 +90,7 @@ static const SlashCommand slash_commands[] = {
     {"memory",  "m",    "Show/manage agent memory",     cmd_memory},
     {"recover", "r",    "Attempt to fix last error",    cmd_recover},
     {"fix",     NULL,   "Attempt to fix last error",    cmd_recover},
+    {"create",  NULL,   "Create project from description", cmd_create},
     {NULL, NULL, NULL, NULL}
 };
 
@@ -1900,5 +1902,136 @@ bool cmd_recover(ReplSession* session, const char* args) {
 
     error_diagnosis_free(diagnosis);
     project_context_free(project_ctx);
+    return true;
+}
+
+/* /create - Create a new project from natural language description */
+bool cmd_create(ReplSession* session, const char* args) {
+    (void)session;  /* May use orchestrator in future */
+
+    if (!args || strlen(args) == 0) {
+        printf("Usage: /create <description> [output_path]\n");
+        printf("\nExamples:\n");
+        printf("  /create C++ game with SDL2\n");
+        printf("  /create python web api called myapi\n");
+        printf("  /create rust cli tool named mycli\n");
+        printf("  /create go rest server\n");
+        return true;
+    }
+
+    /* Check if last word looks like a path (contains / or \\ or is ".") */
+    const char* output_path = ".";
+    char* description = strdup(args);
+    if (!description) {
+        log_error("Memory allocation failed");
+        return true;
+    }
+
+    /* Trim trailing whitespace */
+    size_t len = strlen(description);
+    while (len > 0 && (description[len-1] == ' ' || description[len-1] == '\t')) {
+        description[--len] = '\0';
+    }
+
+    /* Check if last word is a path (contains / or \\) */
+    char* last_space = strrchr(description, ' ');
+    if (last_space) {
+        char* potential_path = last_space + 1;
+        /* If it contains path separators, treat as output path */
+        if (strchr(potential_path, '/') || strchr(potential_path, '\\')) {
+            output_path = potential_path;
+            *last_space = '\0';  /* Truncate description */
+        }
+    }
+
+    bool colors = session->config.colors_enabled;
+
+    if (colors) {
+        printf("\n%s%sCreating project from description...%s\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
+    } else {
+        printf("\nCreating project from description...\n");
+    }
+
+    /* Parse the description */
+    ProjectSpec* spec = project_spec_parse(description);
+    if (!spec) {
+        log_error("Failed to parse project description");
+        free(description);
+        return true;
+    }
+
+    /* Show what we detected */
+    if (colors) {
+        printf("%sDetected:%s\n", COLOR_YELLOW, COLOR_RESET);
+        printf("  Language:     %s%s%s\n", COLOR_GREEN, language_to_string(spec->language), COLOR_RESET);
+        printf("  Project name: %s%s%s\n", COLOR_GREEN, spec->name, COLOR_RESET);
+        printf("  Type:         %s%s%s\n", COLOR_GREEN,
+               spec->type == PROJECT_GAME ? "Game" :
+               spec->type == PROJECT_LIBRARY ? "Library" :
+               spec->type == PROJECT_CLI ? "CLI" :
+               spec->type == PROJECT_WEB ? "Web" :
+               spec->type == PROJECT_GUI ? "GUI" : "Executable", COLOR_RESET);
+        if (spec->dependency_count > 0) {
+            printf("  Dependencies: ");
+            for (int i = 0; i < spec->dependency_count; i++) {
+                printf("%s%s%s%s", COLOR_CYAN, spec->dependencies[i], COLOR_RESET,
+                       i < spec->dependency_count - 1 ? ", " : "");
+            }
+            printf("\n");
+        }
+    } else {
+        printf("Detected:\n");
+        printf("  Language:     %s\n", language_to_string(spec->language));
+        printf("  Project name: %s\n", spec->name);
+        printf("  Type:         %s\n",
+               spec->type == PROJECT_GAME ? "Game" :
+               spec->type == PROJECT_LIBRARY ? "Library" :
+               spec->type == PROJECT_CLI ? "CLI" :
+               spec->type == PROJECT_WEB ? "Web" :
+               spec->type == PROJECT_GUI ? "GUI" : "Executable");
+        if (spec->dependency_count > 0) {
+            printf("  Dependencies: ");
+            for (int i = 0; i < spec->dependency_count; i++) {
+                printf("%s%s", spec->dependencies[i],
+                       i < spec->dependency_count - 1 ? ", " : "");
+            }
+            printf("\n");
+        }
+    }
+    printf("\n");
+
+    /* Generate the project */
+    GenerationResult* result = project_generate(spec, output_path);
+    project_spec_free(spec);
+    free(description);
+
+    if (!result) {
+        log_error("Failed to generate project");
+        return true;
+    }
+
+    if (result->success) {
+        if (colors) {
+            printf("%s%s Project created successfully!%s\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET);
+            printf("%sCreated %d files in: %s%s\n", COLOR_DIM, result->file_count, result->output_path, COLOR_RESET);
+        } else {
+            printf("%s Project created successfully!\n", SYM_CHECK);
+            printf("Created %d files in: %s\n", result->file_count, result->output_path);
+        }
+    } else {
+        if (colors) {
+            printf("%s%s Failed to create project%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+            if (result->error_message) {
+                printf("%sError: %s%s\n", COLOR_DIM, result->error_message, COLOR_RESET);
+            }
+        } else {
+            printf("%s Failed to create project\n", SYM_CROSS);
+            if (result->error_message) {
+                printf("Error: %s\n", result->error_message);
+            }
+        }
+    }
+
+    generation_result_free(result);
     return true;
 }
