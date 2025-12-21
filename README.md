@@ -130,6 +130,40 @@ When errors occur, the AI automatically:
 3. **Executes** the fixes
 4. **Retries** until success (up to 5 attempts)
 
+### Natural Language Project Creation
+
+Generate complete project scaffolds from plain English:
+
+```bash
+# Create a Python web API
+$ cyxmake create "python web api called my_api"
+✓ Detected: Python, Web project
+✓ Project name: my_api
+✓ Created pyproject.toml
+✓ Created src/main.py
+✓ Created README.md, .gitignore
+
+# Create a C++ game with dependencies
+$ cyxmake create "C++ game with SDL2 and OpenGL called space_shooter" ./games
+✓ Detected: C++, Game project
+✓ Dependencies: SDL2, OpenGL
+✓ Created CMakeLists.txt with find_package()
+✓ Created src/main.cpp with game boilerplate
+
+# Create a Rust CLI tool
+$ cyxmake create "rust cli tool named mycli"
+✓ Created Cargo.toml
+✓ Created src/main.rs
+
+# Or use the REPL
+cyxmake> /create go rest server
+cyxmake> /create typescript node api
+```
+
+**Supported Languages**: C, C++, Rust, Python, JavaScript, TypeScript, Go, Java
+
+**Supported Project Types**: Executable, Library, Game, CLI, Web, GUI
+
 ### Autonomous Error Recovery
 
 When builds fail, CyxMake:
@@ -359,6 +393,7 @@ cyxmake> @ai fix the errors     # Ask AI for help
 | `/ai providers` | - | List configured AI providers |
 | `/ai use <name>` | - | Switch to a specific provider |
 | `/ai test` | - | Test current AI connection |
+| `/create` | - | Create project from natural language |
 | `/exit` | `/q` | Exit CyxMake |
 
 ### CLI Commands
@@ -368,6 +403,7 @@ cyxmake> @ai fix the errors     # Ask AI for help
 | `cyxmake` | Start interactive REPL |
 | `cyxmake build` | Build project (with error recovery) |
 | `cyxmake auto` | **AI-powered autonomous build** |
+| `cyxmake create` | **Create project from natural language** |
 | `cyxmake init` | Analyze and cache project |
 | `cyxmake help` | Show help |
 
@@ -404,11 +440,11 @@ cyxmake> @ai fix the errors     # Ask AI for help
 - [x] **Permission System** - Confirms before destructive operations
 - [x] **Conversation Context** - Remembers files, errors, history
 - [x] **Cross-Platform** - Windows, Linux, macOS
+- [x] **Project Generation** - Create projects from natural language descriptions
 
 ### In Progress
 
 - [ ] Interactive error fixing
-- [ ] Project generation from natural language
 
 ### Planned
 
