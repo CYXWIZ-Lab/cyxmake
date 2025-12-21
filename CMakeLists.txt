@@ -28,6 +28,45 @@ option(CYXMAKE_GPU_VULKAN "Enable Vulkan GPU acceleration (cross-platform)" OFF)
 option(CYXMAKE_GPU_METAL "Enable Metal GPU acceleration (Apple)" OFF)
 option(CYXMAKE_GPU_OPENCL "Enable OpenCL GPU acceleration" OFF)
 
+# Auto-detect GPU backends if not explicitly set
+if(NOT CYXMAKE_GPU_CUDA AND NOT CYXMAKE_GPU_VULKAN AND NOT CYXMAKE_GPU_METAL AND NOT CYXMAKE_GPU_OPENCL)
+    # Check for CUDA
+    include(CheckLanguage)
+    check_language(CUDA)
+    if(CMAKE_CUDA_COMPILER)
+        message(STATUS "CUDA detected - enabling GPU acceleration")
+        set(CYXMAKE_GPU_CUDA ON CACHE BOOL "Enable CUDA GPU acceleration" FORCE)
+    endif()
+
+    # Check for Vulkan (fallback if no CUDA)
+    if(NOT CYXMAKE_GPU_CUDA)
+        find_package(Vulkan QUIET)
+        if(Vulkan_FOUND)
+            message(STATUS "Vulkan detected - enabling GPU acceleration")
+            set(CYXMAKE_GPU_VULKAN ON CACHE BOOL "Enable Vulkan GPU acceleration" FORCE)
+        endif()
+    endif()
+
+    # Check for Metal (macOS only, fallback)
+    if(APPLE AND NOT CYXMAKE_GPU_CUDA AND NOT CYXMAKE_GPU_VULKAN)
+        message(STATUS "macOS detected - enabling Metal GPU acceleration")
+        set(CYXMAKE_GPU_METAL ON CACHE BOOL "Enable Metal GPU acceleration" FORCE)
+    endif()
+endif()
+
+# Report GPU backend status
+if(CYXMAKE_GPU_CUDA)
+    message(STATUS "GPU Backend: CUDA (NVIDIA)")
+elseif(CYXMAKE_GPU_VULKAN)
+    message(STATUS "GPU Backend: Vulkan")
+elseif(CYXMAKE_GPU_METAL)
+    message(STATUS "GPU Backend: Metal (Apple)")
+elseif(CYXMAKE_GPU_OPENCL)
+    message(STATUS "GPU Backend: OpenCL")
+else()
+    message(STATUS "GPU Backend: None (CPU only)")
+endif()
+
 # Output directories
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
