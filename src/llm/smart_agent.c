@@ -904,6 +904,52 @@ SmartResult* smart_agent_fix_error(SmartAgent* agent, const char* error) {
     return result;
 }
 
+SmartResult* smart_agent_execute(SmartAgent* agent, const char* command) {
+    if (!agent || !command) return NULL;
+
+    SmartResult* result = calloc(1, sizeof(SmartResult));
+    if (!result) return NULL;
+
+    /* Reason about how to execute this command */
+    char problem[2048];
+    snprintf(problem, sizeof(problem),
+        "I need to execute this task: %s\n\nHow should I approach this?", command);
+
+    ReasoningChain* reasoning = smart_agent_reason(agent, problem);
+
+    if (!reasoning) {
+        result->success = false;
+        result->error = strdup("Failed to reason about task");
+        return result;
+    }
+
+    /* Build result from reasoning */
+    if (reasoning->conclusion) {
+        result->output = strdup(reasoning->conclusion);
+    }
+
+    /* Extract suggestions from reasoning steps */
+    if (reasoning->step_count > 0) {
+        result->suggestions = calloc((size_t)reasoning->step_count, sizeof(char*));
+        result->suggestion_count = 0;
+
+        for (int i = 0; i < reasoning->step_count && result->suggestion_count < 10; i++) {
+            if (reasoning->steps[i] && reasoning->steps[i]->action) {
+                result->suggestions[result->suggestion_count++] =
+                    strdup(reasoning->steps[i]->action);
+            }
+        }
+    }
+
+    result->success = true;
+    result->explanation = strdup(reasoning->conclusion ?
+        reasoning->conclusion : "Task analyzed");
+
+    reasoning_chain_free(reasoning);
+
+    return result;
+}
+
 void smart_result_free(SmartResult* result) {
     if (!result) return;
     free(result->output);

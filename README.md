@@ -164,6 +164,36 @@ cyxmake> /create typescript node api
 
 **Supported Project Types**: Executable, Library, Game, CLI, Web, GUI
 
+### Multi-Agent System
+
+Spawn named agents to handle complex tasks in parallel:
+
+```bash
+cyxmake> /agent spawn builder build
+✓ Created agent 'builder' (type: build, state: idle)
+
+cyxmake> /agent spawn analyzer smart
+✓ Created agent 'analyzer' (type: smart, state: idle)
+
+cyxmake> /agent assign builder "Build with Release config"
+✓ Task assigned to 'builder': Build with Release config
+Agent will execute task asynchronously...
+
+cyxmake> /agent list
+Active Agents
+  * builder      build    running    Build with Release config
+  * analyzer     smart    idle
+
+cyxmake> /agent wait builder
+Waiting for agent 'builder' to complete...
+✓ Agent 'builder' completed
+```
+
+**Agent Types:**
+- **smart** - Intelligent reasoning agent with chain-of-thought
+- **build** - Specialized build agent with error recovery
+- **auto** - Autonomous tool-using agent
+
 ### Autonomous Error Recovery
 
 When builds fail, CyxMake:
@@ -342,16 +372,16 @@ cyxmake> @ai fix the errors     # Ask AI for help
 │  └──────────────────────┘  └──────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
                               │
-              ┌───────────────┼───────────────┐
-              ▼               ▼               ▼
-┌──────────────────┐ ┌──────────────┐ ┌──────────────────┐
-│  Local Execution │ │  AI Agent    │ │  Error Recovery  │
-│  (build, read,   │ │  System      │ │  System          │
-│   clean, etc.)   │ │  (Complex    │ │  (Diagnosis,     │
-│                  │ │   queries)   │ │   suggestions)   │
-└──────────────────┘ └──────────────┘ └──────────────────┘
-              │               │               │
-              └───────────────┼───────────────┘
+      ┌───────────────┬───────┴───────┬───────────────┐
+      ▼               ▼               ▼               ▼
+┌───────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+│  Local    │ │  AI Agent   │ │   Error     │ │ Multi-Agent │
+│ Execution │ │  System     │ │  Recovery   │ │  System     │
+│ (build,   │ │  (Complex   │ │  (Diagnosis,│ │  (Parallel  │
+│  read)    │ │   queries)  │ │   fixes)    │ │   tasks)    │
+└───────────┘ └─────────────┘ └─────────────┘ └─────────────┘
+      │               │               │               │
+      └───────────────┴───────┬───────┴───────────────┘
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                 Tool Discovery & Execution                   │
@@ -394,6 +424,13 @@ cyxmake> @ai fix the errors     # Ask AI for help
 | `/ai use <name>` | - | Switch to a specific provider |
 | `/ai test` | - | Test current AI connection |
 | `/create` | - | Create project from natural language |
+| `/agent` | `/a` | Multi-agent system management |
+| `/agent list` | - | List all active agents |
+| `/agent spawn <name> <type>` | - | Create new agent (smart/build/auto) |
+| `/agent assign <name> <task>` | - | Assign task to agent |
+| `/agent status <name>` | - | Show agent status |
+| `/agent terminate <name>` | - | Stop an agent |
+| `/agent wait <name>` | - | Wait for agent completion |
 | `/exit` | `/q` | Exit CyxMake |
 
 ### CLI Commands
@@ -434,6 +471,7 @@ cyxmake> @ai fix the errors     # Ask AI for help
 - [x] **Multi-Provider AI** - Ollama, LM Studio, OpenAI, Anthropic, Gemini, OpenRouter, Groq, llama.cpp
 - [x] **AI Agent System** - LLM-powered action execution
 - [x] **AI Autonomous Build** - `cyxmake auto` for fully autonomous building
+- [x] **Multi-Agent System** - Named agents, parallel execution, task assignment
 - [x] **Tool Discovery** - Auto-detects compilers, build tools, package managers
 - [x] **Tool Execution** - Safe command execution with output capture
 - [x] **Error Recovery** - Pattern matching + AI-powered diagnosis

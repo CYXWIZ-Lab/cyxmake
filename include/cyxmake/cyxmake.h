@@ -30,6 +30,14 @@ typedef struct LLMContext LLMContext;
 typedef struct ToolRegistry ToolRegistry;
 typedef struct Config Config;
 
+/* Multi-agent system forward declarations */
+typedef struct AgentRegistry AgentRegistry;
+typedef struct AgentCoordinator AgentCoordinator;
+typedef struct MessageBus MessageBus;
+typedef struct SharedState SharedState;
+typedef struct TaskQueue TaskQueue;
+typedef struct ThreadPool ThreadPool;
+
 /* Common types */
 typedef enum {
     CYXMAKE_SUCCESS = 0,
@@ -139,6 +147,59 @@ ToolRegistry* cyxmake_get_tools(Orchestrator* orch);
  * @return true if AI engine is available
  */
 bool cyxmake_ai_enabled(Orchestrator* orch);
+
+/* ========================================================================
+ * Multi-Agent System API
+ * ======================================================================== */
+
+/**
+ * Get the agent registry from orchestrator
+ * @param orch Orchestrator instance
+ * @return Agent registry or NULL
+ */
+AgentRegistry* cyxmake_get_agent_registry(Orchestrator* orch);
+
+/**
+ * Get the agent coordinator from orchestrator
+ * @param orch Orchestrator instance
+ * @return Agent coordinator or NULL
+ */
+AgentCoordinator* cyxmake_get_coordinator(Orchestrator* orch);
+
+/**
+ * Get the message bus from orchestrator
+ * @param orch Orchestrator instance
+ * @return Message bus or NULL
+ */
+MessageBus* cyxmake_get_message_bus(Orchestrator* orch);
+
+/**
+ * Get the shared state from orchestrator
+ * @param orch Orchestrator instance
+ * @return Shared state or NULL
+ */
+SharedState* cyxmake_get_shared_state(Orchestrator* orch);
+
+/**
+ * Get the task queue from orchestrator
+ * @param orch Orchestrator instance
+ * @return Task queue or NULL
+ */
+TaskQueue* cyxmake_get_task_queue(Orchestrator* orch);
+
+/**
+ * Get the thread pool from orchestrator
+ * @param orch Orchestrator instance
+ * @return Thread pool or NULL
+ */
+ThreadPool* cyxmake_get_thread_pool(Orchestrator* orch);
+
+/**
+ * Check if multi-agent system is enabled
+ * @param orch Orchestrator instance
+ * @return true if multi-agent system is available
+ */
+bool cyxmake_multi_agent_enabled(Orchestrator* orch);
 
 #ifdef __cplusplus
 }

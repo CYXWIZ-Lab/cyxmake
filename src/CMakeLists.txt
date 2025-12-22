@@ -38,6 +38,14 @@ set(CYXMAKE_CORE_SOURCES
     # Phase 2: Permission System (shared between core and CLI)
     cli/permission.c
 
+    # Multi-Agent System
+    agents/threading.c
+    agents/agent_registry.c
+    agents/task_queue.c
+    agents/message_bus.c
+    agents/shared_state.c
+    agents/agent_coordinator.c
+
     # TODO Phase 1: Add remaining files when implemented
     # core/config.c
     # context/change_detector.c
@@ -72,6 +80,13 @@ if(CURL_FOUND)
     target_link_libraries(cyxmake_core PUBLIC CURL::libcurl)
     target_compile_definitions(cyxmake_core PUBLIC CYXMAKE_USE_CURL)
     message(STATUS "CURL enabled - HTTP AI providers available")
+endif()
+
+# Link pthreads on Unix systems (for multi-agent threading support)
+if(NOT WIN32)
+    find_package(Threads REQUIRED)
+    target_link_libraries(cyxmake_core PUBLIC Threads::Threads)
+    message(STATUS "Threading support enabled (pthreads)")
 endif()
 
 # Compiler warnings

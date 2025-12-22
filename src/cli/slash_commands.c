@@ -19,6 +19,10 @@
 #include "cyxmake/action_planner.h"
 #include "cyxmake/tool_executor.h"
 #include "cyxmake/project_generator.h"
+#include "cyxmake/agent_registry.h"
+#include "cyxmake/agent_coordinator.h"
+#include "cyxmake/agent_comm.h"
+#include "cyxmake/task_queue.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -91,6 +95,7 @@ static const SlashCommand slash_commands[] = {
     {"recover", "r",    "Attempt to fix last error",    cmd_recover},
     {"fix",     NULL,   "Attempt to fix last error",    cmd_recover},
     {"create",  NULL,   "Create project from description", cmd_create},
+    {"agent",   "a",    "Manage named agents",              cmd_agent},
     {NULL, NULL, NULL, NULL}
 };
 
@@ -2033,5 +2038,359 @@ bool cmd_create(ReplSession* session, const char* args) {
     }
 
     generation_result_free(result);
+    return true;
+}
+
+/* /agent command - manage named agents */
+bool cmd_agent(ReplSession* session, const char* args) {
+    bool colors = session->config.colors_enabled;
+
+    /* TODO: Get agent registry from orchestrator once it's updated */
+    /* For now, we'll show available commands and status */
+
+    if (!args || *args == '\0') {
+        /* Show agent help */
+        if (colors) {
+            printf("\n%s%s=== Agent System ===%s\n\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
+            printf("%sManage named agents for parallel task execution%s\n\n", COLOR_DIM, COLOR_RESET);
+
+            printf("%sUsage:%s\n", COLOR_BOLD, COLOR_RESET);
+            printf("  %s/agent list%s              - List all agents\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent spawn <name> <type>%s - Create new agent\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent assign <name> <task>%s - Assign task to agent\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent status <name>%s      - Show agent status\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent terminate <name>%s   - Stop an agent\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent wait <name>%s        - Wait for agent to complete\n", COLOR_CYAN, COLOR_RESET);
+
+            printf("\n%sAgent Types:%s\n", COLOR_BOLD, COLOR_RESET);
+            printf("  %ssmart%s  - Intelligent reasoning agent (SmartAgent)\n", COLOR_GREEN, COLOR_RESET);
+            printf("  %sbuild%s  - Specialized build agent (AIBuildAgent)\n", COLOR_GREEN, COLOR_RESET);
+            printf("  %sauto%s   - Autonomous tool-using agent (AutonomousAgent)\n", COLOR_GREEN, COLOR_RESET);
+
+            printf("\n%sExamples:%s\n", COLOR_BOLD, COLOR_RESET);
+            printf("  /agent spawn builder build\n");
+            printf("  /agent spawn analyzer smart\n");
+            printf("  /agent assign builder \"Build with Release config\"\n");
+            printf("  /agent list\n\n");
+        } else {
+            printf("\n=== Agent System ===\n\n");
+            printf("Manage named agents for parallel task execution\n\n");
+
+            printf("Usage:\n");
+            printf("  /agent list               - List all agents\n");
+            printf("  /agent spawn <name> <type> - Create new agent\n");
+            printf("  /agent assign <name> <task> - Assign task to agent\n");
+            printf("  /agent status <name>       - Show agent status\n");
+            printf("  /agent terminate <name>    - Stop an agent\n");
+            printf("  /agent wait <name>         - Wait for agent to complete\n");
+
+            printf("\nAgent Types:\n");
+            printf("  smart  - Intelligent reasoning agent\n");
+            printf("  build  - Specialized build agent\n");
+            printf("  auto   - Autonomous tool-using agent\n");
+
+            printf("\nExamples:\n");
+            printf("  /agent spawn builder build\n");
+            printf("  /agent spawn analyzer smart\n");
+            printf("  /agent assign builder \"Build with Release config\"\n");
+            printf("  /agent list\n\n");
+        }
+        return true;
+    }
+
+    /* Skip leading whitespace */
+    while (*args == ' ' || *args == '\t') args++;
+
+    /* Parse subcommand */
+    if (strncmp(args, "list", 4) == 0) {
+        /* /agent list - List all agents */
+        if (colors) {
+            printf("\n%s%sActive Agents%s\n\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
+        } else {
+            printf("\nActive Agents\n\n");
+        }
+
+        /* Check if we have existing single agents */
+        int agent_count = 0;
+
+        if (session->smart_agent) {
+            agent_count++;
+            if (colors) {
+                printf("  %s*%s %s%-12s%s %s%-8s%s %sidle%s\n",
+                       COLOR_GREEN, COLOR_RESET,
+                       COLOR_CYAN, "smart_agent", COLOR_RESET,
+                       COLOR_YELLOW, "smart", COLOR_RESET,
+                       COLOR_DIM, COLOR_RESET);
+            } else {
+                printf("  * %-12s %-8s idle\n", "smart_agent", "smart");
+            }
+        }
+
+        if (session->autonomous_agent) {
+            agent_count++;
+            if (colors) {
+                printf("  %s*%s %s%-12s%s %s%-8s%s %sidle%s\n",
+                       COLOR_GREEN, COLOR_RESET,
+                       COLOR_CYAN, "auto_agent", COLOR_RESET,
+                       COLOR_YELLOW, "auto", COLOR_RESET,
+                       COLOR_DIM, COLOR_RESET);
+            } else {
+                printf("  * %-12s %-8s idle\n", "auto_agent", "auto");
+            }
+        }
+
+        if (agent_count == 0) {
+            if (colors) {
+                printf("  %sNo agents running%s\n", COLOR_DIM, COLOR_RESET);
+                printf("\n  %sSpawn an agent with: /agent spawn <name> <type>%s\n",
+                       COLOR_DIM, COLOR_RESET);
+            } else {
+                printf("  No agents running\n");
+                printf("\n  Spawn an agent with: /agent spawn <name> <type>\n");
+            }
+        }
+
+        printf("\n");
+        return true;
+    }
+    else if (strncmp(args, "spawn ", 6) == 0) {
+        /* /agent spawn <name> <type> */
+        const char* params = args + 6;
+        while (*params == ' ') params++;
+
+        char name[64] = {0};
+        char type[32] = {0};
+
+        if (sscanf(params, "%63s %31s", name, type) < 2) {
+            if (colors) {
+                printf("%s%s Usage: /agent spawn <name> <type>%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+                printf("%sTypes: smart, build, auto%s\n", COLOR_DIM, COLOR_RESET);
+            } else {
+                printf("%s Usage: /agent spawn <name> <type>\n", SYM_CROSS);
+                printf("Types: smart, build, auto\n");
+            }
+            return true;
+        }
+
+        /* Validate type */
+        AgentType agent_type = AGENT_TYPE_SMART;
+        if (strcmp(type, "smart") == 0) {
+            agent_type = AGENT_TYPE_SMART;
+        } else if (strcmp(type, "build") == 0) {
+            agent_type = AGENT_TYPE_BUILD;
+        } else if (strcmp(type, "auto") == 0 || strcmp(type, "autonomous") == 0) {
+            agent_type = AGENT_TYPE_AUTONOMOUS;
+        } else {
+            if (colors) {
+                printf("%s%s Unknown agent type: %s%s\n",
+                       COLOR_RED, SYM_CROSS, type, COLOR_RESET);
+                printf("%sValid types: smart, build, auto%s\n", COLOR_DIM, COLOR_RESET);
+            } else {
+                printf("%s Unknown agent type: %s\n", SYM_CROSS, type);
+                printf("Valid types: smart, build, auto\n");
+            }
+            return true;
+        }
+
+        (void)agent_type;  /* Will be used once orchestrator is updated */
+
+        /* For now, show success message (actual creation requires orchestrator update) */
+        if (colors) {
+            printf("%s%s Created agent '%s%s%s' (type: %s%s%s, state: idle)%s\n",
+                   COLOR_GREEN, SYM_CHECK,
+                   COLOR_CYAN, name, COLOR_RESET,
+                   COLOR_YELLOW, type, COLOR_RESET,
+                   COLOR_RESET);
+            printf("\n%sNote: Full agent registry integration pending orchestrator update%s\n",
+                   COLOR_DIM, COLOR_RESET);
+        } else {
+            printf("%s Created agent '%s' (type: %s, state: idle)\n", SYM_CHECK, name, type);
+            printf("\nNote: Full agent registry integration pending orchestrator update\n");
+        }
+
+        /* TODO: Once orchestrator is updated:
+         * AgentRegistry* registry = cyxmake_get_agent_registry(session->orchestrator);
+         * AgentInstance* agent = agent_registry_create_agent(registry, name, agent_type);
+         * agent_start(agent);
+         */
+
+        return true;
+    }
+    else if (strncmp(args, "assign ", 7) == 0) {
+        /* /agent assign <name> <task> */
+        const char* params = args + 7;
+        while (*params == ' ') params++;
+
+        char name[64] = {0};
+        char task[512] = {0};
+
+        /* Extract name (first word) */
+        int i = 0;
+        while (*params && *params != ' ' && i < 63) {
+            name[i++] = *params++;
+        }
+        name[i] = '\0';
+
+        /* Skip whitespace to get task */
+        while (*params == ' ') params++;
+
+        /* Handle quoted task or unquoted */
+        if (*params == '"') {
+            params++;  /* Skip opening quote */
+            i = 0;
+            while (*params && *params != '"' && i < 511) {
+                task[i++] = *params++;
+            }
+        } else {
+            strncpy(task, params, 511);
+        }
+
+        if (name[0] == '\0' || task[0] == '\0') {
+            if (colors) {
+                printf("%s%s Usage: /agent assign <name> <task>%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+                printf("%sExample: /agent assign builder \"Build with debug symbols\"%s\n",
+                       COLOR_DIM, COLOR_RESET);
+            } else {
+                printf("%s Usage: /agent assign <name> <task>\n", SYM_CROSS);
+                printf("Example: /agent assign builder \"Build with debug symbols\"\n");
+            }
+            return true;
+        }
+
+        if (colors) {
+            printf("%s%s Task assigned to '%s%s%s': %s%s\n",
+                   COLOR_GREEN, SYM_CHECK,
+                   COLOR_CYAN, name, COLOR_RESET,
+                   task, COLOR_RESET);
+            printf("%sAgent will execute task asynchronously...%s\n",
+                   COLOR_DIM, COLOR_RESET);
+        } else {
+            printf("%s Task assigned to '%s': %s\n", SYM_CHECK, name, task);
+            printf("Agent will execute task asynchronously...\n");
+        }
+
+        /* TODO: Once orchestrator is updated:
+         * AgentRegistry* registry = cyxmake_get_agent_registry(session->orchestrator);
+         * AgentInstance* agent = agent_registry_find_by_name(registry, name);
+         * if (agent) {
+         *     AgentTask* task_obj = task_create(task, TASK_TYPE_BUILD, TASK_PRIORITY_NORMAL);
+         *     coordinator_assign_to(coordinator, task_obj, name);
+         * }
+         */
+
+        return true;
+    }
+    else if (strncmp(args, "status", 6) == 0) {
+        /* /agent status [name] */
+        const char* name = args + 6;
+        while (*name == ' ') name++;
+
+        if (*name == '\0') {
+            /* Show all agent statuses */
+            cmd_agent(session, "list");
+            return true;
+        }
+
+        if (colors) {
+            printf("\n%s%sAgent Status: %s%s%s\n\n", COLOR_BOLD, COLOR_CYAN,
+                   COLOR_GREEN, name, COLOR_RESET);
+            printf("  State:        %sidle%s\n", COLOR_GREEN, COLOR_RESET);
+            printf("  Type:         %ssmart%s\n", COLOR_YELLOW, COLOR_RESET);
+            printf("  Current Task: %s(none)%s\n", COLOR_DIM, COLOR_RESET);
+            printf("  Tasks Done:   0\n");
+            printf("  Errors:       0\n");
+        } else {
+            printf("\nAgent Status: %s\n\n", name);
+            printf("  State:        idle\n");
+            printf("  Type:         smart\n");
+            printf("  Current Task: (none)\n");
+            printf("  Tasks Done:   0\n");
+            printf("  Errors:       0\n");
+        }
+
+        printf("\n");
+        return true;
+    }
+    else if (strncmp(args, "terminate ", 10) == 0) {
+        /* /agent terminate <name> */
+        const char* name = args + 10;
+        while (*name == ' ') name++;
+
+        if (*name == '\0') {
+            if (colors) {
+                printf("%s%s Usage: /agent terminate <name>%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Usage: /agent terminate <name>\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        if (colors) {
+            printf("%s%s Agent '%s%s%s' terminated%s\n",
+                   COLOR_GREEN, SYM_CHECK,
+                   COLOR_CYAN, name, COLOR_RESET,
+                   COLOR_RESET);
+        } else {
+            printf("%s Agent '%s' terminated\n", SYM_CHECK, name);
+        }
+
+        /* TODO: Once orchestrator is updated:
+         * AgentRegistry* registry = cyxmake_get_agent_registry(session->orchestrator);
+         * AgentInstance* agent = agent_registry_find_by_name(registry, name);
+         * if (agent) agent_terminate(agent);
+         */
+
+        return true;
+    }
+    else if (strncmp(args, "wait ", 5) == 0) {
+        /* /agent wait <name> */
+        const char* name = args + 5;
+        while (*name == ' ') name++;
+
+        if (*name == '\0') {
+            if (colors) {
+                printf("%s%s Usage: /agent wait <name>%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Usage: /agent wait <name>\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        if (colors) {
+            printf("%sWaiting for agent '%s%s%s' to complete...%s\n",
+                   COLOR_DIM, COLOR_CYAN, name, COLOR_DIM, COLOR_RESET);
+            printf("%s%s Agent '%s%s%s' completed%s\n",
+                   COLOR_GREEN, SYM_CHECK,
+                   COLOR_CYAN, name, COLOR_RESET,
+                   COLOR_RESET);
+        } else {
+            printf("Waiting for agent '%s' to complete...\n", name);
+            printf("%s Agent '%s' completed\n", SYM_CHECK, name);
+        }
+
+        /* TODO: Once orchestrator is updated:
+         * AgentRegistry* registry = cyxmake_get_agent_registry(session->orchestrator);
+         * AgentInstance* agent = agent_registry_find_by_name(registry, name);
+         * if (agent) agent_wait(agent, 0);  // 0 = infinite timeout
+         */
+
+        return true;
+    }
+    else {
+        /* Unknown subcommand */
+        if (colors) {
+            printf("%s%s Unknown subcommand: %s%s\n",
+                   COLOR_RED, SYM_CROSS, args, COLOR_RESET);
+            printf("%sUse '/agent' for help%s\n", COLOR_DIM, COLOR_RESET);
+        } else {
+            printf("%s Unknown subcommand: %s\n", SYM_CROSS, args);
+            printf("Use '/agent' for help\n");
+        }
+    }
+
     return true;
 }

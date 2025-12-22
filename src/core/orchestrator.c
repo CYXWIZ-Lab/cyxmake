@@ -15,6 +15,11 @@
 #include "cyxmake/config.h"
 #include "cyxmake/project_generator.h"
 #include "cyxmake/logger.h"
+#include "cyxmake/threading.h"
+#include "cyxmake/agent_registry.h"
+#include "cyxmake/agent_coordinator.h"
+#include "cyxmake/agent_comm.h"
+#include "cyxmake/task_queue.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -30,6 +35,15 @@ struct Orchestrator {
     RecoveryStrategy recovery_strategy;
     bool ai_enabled;
     bool tools_enabled;
+
+    /* Multi-agent system */
+    ThreadPool* thread_pool;         /* Async task execution */
+    AgentRegistry* agent_registry;   /* Named agent management */
+    MessageBus* message_bus;         /* Agent communication */
+    SharedState* shared_state;       /* Shared context */
+    AgentCoordinator* coordinator;   /* Task distribution & conflict resolution */
+    TaskQueue* task_queue;           /* Priority-based task scheduling */
+    bool multi_agent_enabled;
 };
 
 const char* cyxmake_version(void) {
@@ -151,6 +165,68 @@ Orchestrator* cyxmake_init(const char* config_path) {
         }
     }
 
+    /* Initialize multi-agent system */
+    log_info("Initializing multi-agent system...");
+
+    /* Create thread pool (auto-size based on CPU cores) */
+    orch->thread_pool = thread_pool_create(0);
+    if (orch->thread_pool) {
+        log_debug("Thread pool created");
+    }
+
+    /* Create shared state for agent context */
+    orch->shared_state = shared_state_create();
+    if (orch->shared_state) {
+        /* Set persistence path */
+        char state_path[1024];
+        snprintf(state_path, sizeof(state_path), ".cyxmake/agent_state.json");
+        shared_state_set_persistence(orch->shared_state, state_path);
+        shared_state_load(orch->shared_state);
+    }
+
+    /* Create message bus for agent communication */
+    orch->message_bus = message_bus_create();
+
+    /* Create agent registry */
+    orch->agent_registry = agent_registry_create(
+        orch->default_ai,
+        orch->tool_registry,
+        orch->thread_pool
+    );
+    if (orch->agent_registry) {
+        log_debug("Agent registry created");
+    }
+
+    /* Create task queue with priority scheduling */
+    orch->task_queue = task_queue_create();
+
+    /* Create agent coordinator */
+    if (orch->agent_registry && orch->message_bus && orch->shared_state) {
+        CoordinatorConfig coord_config = coordinator_config_defaults();
+        coord_config.verbose = false;
+        coord_config.max_concurrent_agents = 4;
+
+        orch->coordinator = coordinator_create(
+            orch->agent_registry,
+            orch->message_bus,
+            orch->shared_state,
+            &coord_config
+        );
+
+        if (orch->coordinator && orch->task_queue) {
+            coordinator_set_task_queue(orch->coordinator, orch->task_queue);
+        }
+
+        if (orch->coordinator) {
+            orch->multi_agent_enabled = true;
+            log_success("Multi-agent system ready");
+        }
+    }
+
+    if (!orch->multi_agent_enabled) {
+        log_debug("Multi-agent system not fully initialized");
+    }
+
     log_plain("\n");
     return orch;
 }
@@ -161,6 +237,48 @@ void cyxmake_shutdown(Orchestrator* orch) {
     }
 
     log_debug("Shutting down CyxMake...");
+
+    /* Shutdown multi-agent system first */
+    if (orch->multi_agent_enabled) {
+        log_debug("Shutting down multi-agent system...");
+
+        /* Free coordinator (manages agents, doesn't own registry) */
+        if (orch->coordinator) {
+            coordinator_free(orch->coordinator);
+            orch->coordinator = NULL;
+        }
+
+        /* Free task queue */
+        if (orch->task_queue) {
+            task_queue_free(orch->task_queue);
+            orch->task_queue = NULL;
+        }
+
+        /* Free agent registry (will terminate all agents) */
+        if (orch->agent_registry) {
+            agent_registry_free(orch->agent_registry);
+            orch->agent_registry = NULL;
+        }
+
+        /* Save and free shared state */
+        if (orch->shared_state) {
+            shared_state_save(orch->shared_state);
+            shared_state_free(orch->shared_state);
+            orch->shared_state = NULL;
+        }
+
+        /* Free message bus */
+        if (orch->message_bus) {
+            message_bus_free(orch->message_bus);
+            orch->message_bus = NULL;
+        }
+
+        /* Shutdown thread pool last */
+        if (orch->thread_pool) {
+            thread_pool_free(orch->thread_pool);
+            orch->thread_pool = NULL;
+        }
+    }
 
     /* Free project context */
     if (orch->current_project) {
@@ -481,4 +599,43 @@ ToolRegistry* cyxmake_get_tools(Orchestrator* orch) {
 /* Check if AI is enabled */
 bool cyxmake_ai_enabled(Orchestrator* orch) {
     return orch ? orch->ai_enabled : false;
+}
+
+/* ========================================================================
+ * Multi-Agent System Accessors
+ * ======================================================================== */
+
+/* Get the agent registry from orchestrator */
+AgentRegistry* cyxmake_get_agent_registry(Orchestrator* orch) {
+    return orch ? orch->agent_registry : NULL;
+}
+
+/* Get the agent coordinator from orchestrator */
+AgentCoordinator* cyxmake_get_coordinator(Orchestrator* orch) {
+    return orch ? orch->coordinator : NULL;
+}
+
+/* Get the message bus from orchestrator */
+MessageBus* cyxmake_get_message_bus(Orchestrator* orch) {
+    return orch ? orch->message_bus : NULL;
+}
+
+/* Get the shared state from orchestrator */
+SharedState* cyxmake_get_shared_state(Orchestrator* orch) {
+    return orch ? orch->shared_state : NULL;
+}
+
+/* Get the task queue from orchestrator */
+TaskQueue* cyxmake_get_task_queue(Orchestrator* orch) {
+    return orch ? orch->task_queue : NULL;
+}
+
+/* Get the thread pool from orchestrator */
+ThreadPool* cyxmake_get_thread_pool(Orchestrator* orch) {
+    return orch ? orch->thread_pool : NULL;
+}
+
+/* Check if multi-agent system is enabled */
+bool cyxmake_multi_agent_enabled(Orchestrator* orch) {
+    return orch ? orch->multi_agent_enabled : false;
 }
