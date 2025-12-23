@@ -2078,21 +2078,25 @@ bool cmd_agent(ReplSession* session, const char* args) {
             printf("%sManage named agents for parallel task execution%s\n\n", COLOR_DIM, COLOR_RESET);
 
             printf("%sUsage:%s\n", COLOR_BOLD, COLOR_RESET);
-            printf("  %s/agent list%s              - List all agents\n", COLOR_CYAN, COLOR_RESET);
-            printf("  %s/agent spawn <name> <type>%s - Create new agent\n", COLOR_CYAN, COLOR_RESET);
-            printf("  %s/agent assign <name> <task>%s - Assign task to agent\n", COLOR_CYAN, COLOR_RESET);
-            printf("  %s/agent status <name>%s      - Show agent status\n", COLOR_CYAN, COLOR_RESET);
-            printf("  %s/agent terminate <name>%s   - Stop an agent\n", COLOR_CYAN, COLOR_RESET);
-            printf("  %s/agent wait <name>%s        - Wait for agent to complete\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent list%s                     - List all agents\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent spawn <name> <type>%s      - Create new agent\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent spawn <name> <type> --mock%s - Create agent in mock mode\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent assign <name> <task>%s     - Assign task to agent\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent status <name>%s            - Show agent status\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent terminate <name>%s         - Stop an agent\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent wait <name>%s              - Wait for agent to complete\n", COLOR_CYAN, COLOR_RESET);
 
             printf("\n%sAgent Types:%s\n", COLOR_BOLD, COLOR_RESET);
             printf("  %ssmart%s  - Intelligent reasoning agent (SmartAgent)\n", COLOR_GREEN, COLOR_RESET);
             printf("  %sbuild%s  - Specialized build agent (AIBuildAgent)\n", COLOR_GREEN, COLOR_RESET);
             printf("  %sauto%s   - Autonomous tool-using agent (AutonomousAgent)\n", COLOR_GREEN, COLOR_RESET);
 
+            printf("\n%sOptions:%s\n", COLOR_BOLD, COLOR_RESET);
+            printf("  %s--mock%s - Run in mock mode (no AI backend required, for testing)\n", COLOR_YELLOW, COLOR_RESET);
+
             printf("\n%sExamples:%s\n", COLOR_BOLD, COLOR_RESET);
             printf("  /agent spawn builder build\n");
-            printf("  /agent spawn analyzer smart\n");
+            printf("  /agent spawn helper smart --mock\n");
             printf("  /agent assign builder \"Build with Release config\"\n");
             printf("  /agent list\n\n");
         } else {
@@ -2100,21 +2104,25 @@ bool cmd_agent(ReplSession* session, const char* args) {
             printf("Manage named agents for parallel task execution\n\n");
 
             printf("Usage:\n");
-            printf("  /agent list               - List all agents\n");
-            printf("  /agent spawn <name> <type> - Create new agent\n");
-            printf("  /agent assign <name> <task> - Assign task to agent\n");
-            printf("  /agent status <name>       - Show agent status\n");
-            printf("  /agent terminate <name>    - Stop an agent\n");
-            printf("  /agent wait <name>         - Wait for agent to complete\n");
+            printf("  /agent list                      - List all agents\n");
+            printf("  /agent spawn <name> <type>       - Create new agent\n");
+            printf("  /agent spawn <name> <type> --mock - Create agent in mock mode\n");
+            printf("  /agent assign <name> <task>      - Assign task to agent\n");
+            printf("  /agent status <name>             - Show agent status\n");
+            printf("  /agent terminate <name>          - Stop an agent\n");
+            printf("  /agent wait <name>               - Wait for agent to complete\n");
 
             printf("\nAgent Types:\n");
             printf("  smart  - Intelligent reasoning agent\n");
             printf("  build  - Specialized build agent\n");
             printf("  auto   - Autonomous tool-using agent\n");
 
+            printf("\nOptions:\n");
+            printf("  --mock - Run in mock mode (no AI backend required, for testing)\n");
+
             printf("\nExamples:\n");
             printf("  /agent spawn builder build\n");
-            printf("  /agent spawn analyzer smart\n");
+            printf("  /agent spawn helper smart --mock\n");
             printf("  /agent assign builder \"Build with Release config\"\n");
             printf("  /agent list\n\n");
         }
@@ -2195,23 +2203,33 @@ bool cmd_agent(ReplSession* session, const char* args) {
         return true;
     }
     else if (strncmp(args, "spawn ", 6) == 0) {
-        /* /agent spawn <name> <type> */
+        /* /agent spawn <name> <type> [--mock] */
         const char* params = args + 6;
         while (*params == ' ') params++;
 
         char name[64] = {0};
         char type[32] = {0};
+        char extra[32] = {0};
+        bool mock_mode = false;
 
-        if (sscanf(params, "%63s %31s", name, type) < 2) {
+        int parsed = sscanf(params, "%63s %31s %31s", name, type, extra);
+        if (parsed < 2) {
             if (colors) {
-                printf("%s%s Usage: /agent spawn <name> <type>%s\n",
+                printf("%s%s Usage: /agent spawn <name> <type> [--mock]%s\n",
                        COLOR_RED, SYM_CROSS, COLOR_RESET);
                 printf("%sTypes: smart, build, auto%s\n", COLOR_DIM, COLOR_RESET);
+                printf("%sOptions: --mock (run without AI backend)%s\n", COLOR_DIM, COLOR_RESET);
             } else {
-                printf("%s Usage: /agent spawn <name> <type>\n", SYM_CROSS);
+                printf("%s Usage: /agent spawn <name> <type> [--mock]\n", SYM_CROSS);
                 printf("Types: smart, build, auto\n");
+                printf("Options: --mock (run without AI backend)\n");
             }
             return true;
+        }
+
+        /* Check for --mock flag */
+        if (parsed >= 3 && strcmp(extra, "--mock") == 0) {
+            mock_mode = true;
         }
 
         /* Validate and parse type */
@@ -2252,8 +2270,12 @@ bool cmd_agent(ReplSession* session, const char* args) {
             return true;
         }
 
+        /* Create agent config */
+        AgentInstanceConfig config = agent_config_defaults();
+        config.mock_mode = mock_mode;
+
         /* Create the agent */
-        AgentInstance* agent = agent_registry_create_agent(registry, name, agent_type, NULL);
+        AgentInstance* agent = agent_registry_create_agent(registry, name, agent_type, &config);
         if (!agent) {
             if (colors) {
                 printf("%s%s Failed to create agent '%s'%s\n",
@@ -2273,10 +2295,15 @@ bool cmd_agent(ReplSession* session, const char* args) {
                    COLOR_CYAN, name, COLOR_RESET,
                    COLOR_YELLOW, type, COLOR_RESET);
             print_agent_state(agent_get_state(agent), true);
-            printf(")%s\n", COLOR_RESET);
+            printf(")%s", COLOR_RESET);
+            if (mock_mode) {
+                printf(" %s[MOCK MODE]%s", COLOR_YELLOW, COLOR_RESET);
+            }
+            printf("\n");
         } else {
-            printf("%s Created agent '%s' (type: %s, state: %s)\n",
-                   SYM_CHECK, name, type, agent_state_to_string(agent_get_state(agent)));
+            printf("%s Created agent '%s' (type: %s, state: %s)%s\n",
+                   SYM_CHECK, name, type, agent_state_to_string(agent_get_state(agent)),
+                   mock_mode ? " [MOCK MODE]" : "");
         }
 
         return true;

@@ -40,6 +40,7 @@ AgentInstanceConfig agent_config_defaults(void) {
         .temperature = 0.7f,
         .max_tokens = 4096,
         .max_iterations = 20,
+        .mock_mode = false,
         .description = NULL,
         .focus = NULL
     };
@@ -794,34 +795,53 @@ char* agent_run_sync(AgentInstance* agent, const char* task_description) {
     agent_set_state(agent, AGENT_STATE_RUNNING);
     char* result = NULL;
 
-    /* Execute based on agent type */
-    switch (agent->type) {
-        case AGENT_TYPE_SMART:
-            if (agent->impl.smart) {
-                SmartResult* sr = smart_agent_execute(agent->impl.smart,
-                                                      task_description);
-                if (sr) {
-                    result = sr->output ? strdup(sr->output) : NULL;
-                    smart_result_free(sr);
+    /* Check for mock mode */
+    if (agent->config.mock_mode) {
+        log_info("[MOCK] Agent '%s' simulating task: %s", agent->name, task_description);
+
+        /* Generate a mock response */
+        char mock_response[512];
+        snprintf(mock_response, sizeof(mock_response),
+                "[MOCK RESULT] Agent '%s' (type: %s) completed task.\n"
+                "Task: %s\n"
+                "Status: Success (simulated)\n"
+                "Note: Running in mock mode - no AI backend required.",
+                agent->name,
+                agent_type_to_string(agent->type),
+                task_description);
+
+        result = strdup(mock_response);
+        log_success("[MOCK] Task completed successfully (simulated)");
+    } else {
+        /* Execute based on agent type */
+        switch (agent->type) {
+            case AGENT_TYPE_SMART:
+                if (agent->impl.smart) {
+                    SmartResult* sr = smart_agent_execute(agent->impl.smart,
+                                                          task_description);
+                    if (sr) {
+                        result = sr->output ? strdup(sr->output) : NULL;
+                        smart_result_free(sr);
+                    }
                 }
-            }
-            break;
+                break;
 
-        case AGENT_TYPE_AUTONOMOUS:
-            if (agent->impl.autonomous) {
-                result = agent_run(agent->impl.autonomous, task_description);
-            }
-            break;
+            case AGENT_TYPE_AUTONOMOUS:
+                if (agent->impl.autonomous) {
+                    result = agent_run(agent->impl.autonomous, task_description);
+                }
+                break;
 
-        case AGENT_TYPE_BUILD:
-            /* Build agent needs a project path, not a task description */
-            log_warning("Build agent requires project path, not task description");
-            break;
+            case AGENT_TYPE_BUILD:
+                /* Build agent needs a project path, not a task description */
+                log_warning("Build agent requires project path, not task description");
+                break;
 
-        default:
-            log_warning("Agent type '%s' does not support sync execution",
-                       agent_type_to_string(agent->type));
-            break;
+            default:
+                log_warning("Agent type '%s' does not support sync execution",
+                           agent_type_to_string(agent->type));
+                break;
+        }
     }
 
     /* Update state and statistics */

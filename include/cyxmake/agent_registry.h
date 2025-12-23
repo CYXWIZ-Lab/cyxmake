@@ -100,6 +100,9 @@ typedef struct {
     int max_tokens;             /* Max tokens per response */
     int max_iterations;         /* Max reasoning iterations */
 
+    /* Testing/debugging */
+    bool mock_mode;             /* Run in mock mode (no AI required) */
+
     /* Custom description */
     const char* description;    /* User-provided description */
     const char* focus;          /* Task focus area */
