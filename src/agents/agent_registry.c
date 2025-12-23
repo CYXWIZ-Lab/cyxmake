@@ -735,7 +735,29 @@ bool agent_wait(AgentInstance* agent, int timeout_ms) {
     int elapsed = 0;
     int interval = 50; /* Check every 50ms */
 
-    while (!agent_is_finished(agent)) {
+    /* Wait for current task to complete (thread becomes inactive)
+     * or for agent to reach a terminal state */
+    while (1) {
+        /* Check terminal states first */
+        if (agent_is_finished(agent)) {
+            return true;
+        }
+
+        /* Check if agent is running - if not running and not finished,
+         * there's no task to wait for */
+        AgentState state = agent_get_state(agent);
+        if (state == AGENT_STATE_IDLE) {
+            /* Agent is idle - check if there's an active thread */
+            mutex_lock(&agent->state_mutex);
+            bool active = agent->thread_active;
+            mutex_unlock(&agent->state_mutex);
+
+            if (!active) {
+                /* No active task, agent is idle - we're done waiting */
+                return true;
+            }
+        }
+
         thread_sleep(interval);
         elapsed += interval;
 
@@ -857,12 +879,155 @@ char* agent_run_sync(AgentInstance* agent, const char* task_description) {
     return result;
 }
 
+/* Context for async task execution */
+typedef struct {
+    AgentInstance* agent;
+    char* task_description;
+} AsyncTaskContext;
+
+/* Thread function for async execution */
+static void async_task_runner(void* arg) {
+    AsyncTaskContext* ctx = (AsyncTaskContext*)arg;
+    if (!ctx || !ctx->agent || !ctx->task_description) {
+        free(ctx);
+        return;
+    }
+
+    AgentInstance* agent = ctx->agent;
+    char* task_desc = ctx->task_description;
+
+    log_debug("Async task started for agent '%s'", agent->name);
+
+    /* Mark thread as active */
+    mutex_lock(&agent->state_mutex);
+    agent->thread_active = true;
+    mutex_unlock(&agent->state_mutex);
+
+    /* Execute the task synchronously in this thread */
+    agent_set_state(agent, AGENT_STATE_RUNNING);
+    char* result = NULL;
+
+    /* Check for mock mode */
+    if (agent->config.mock_mode) {
+        log_info("[MOCK] Agent '%s' simulating task: %s", agent->name, task_desc);
+
+        /* Generate a mock response */
+        char mock_response[512];
+        snprintf(mock_response, sizeof(mock_response),
+                "[MOCK RESULT] Agent '%s' (type: %s) completed task.\n"
+                "Task: %s\n"
+                "Status: Success (simulated)\n"
+                "Note: Running in mock mode - no AI backend required.",
+                agent->name,
+                agent_type_to_string(agent->type),
+                task_desc);
+
+        result = strdup(mock_response);
+        log_success("[MOCK] Task completed successfully (simulated)");
+    } else {
+        /* Execute based on agent type */
+        switch (agent->type) {
+            case AGENT_TYPE_SMART:
+                if (agent->impl.smart) {
+                    SmartResult* sr = smart_agent_execute(agent->impl.smart, task_desc);
+                    if (sr) {
+                        result = sr->output ? strdup(sr->output) : NULL;
+                        smart_result_free(sr);
+                    }
+                }
+                break;
+
+            case AGENT_TYPE_AUTONOMOUS:
+                if (agent->impl.autonomous) {
+                    result = agent_run(agent->impl.autonomous, task_desc);
+                }
+                break;
+
+            case AGENT_TYPE_BUILD:
+                log_warning("Build agent requires project path, not task description");
+                break;
+
+            default:
+                log_warning("Agent type '%s' does not support async execution",
+                           agent_type_to_string(agent->type));
+                break;
+        }
+    }
+
+    /* Update state and statistics */
+    mutex_lock(&agent->state_mutex);
+    agent->state = AGENT_STATE_IDLE;
+    agent->thread_active = false;
+    if (result) {
+        agent->tasks_completed++;
+        free(agent->last_result);
+        agent->last_result = strdup(result);
+        free(result);
+    } else {
+        agent->tasks_failed++;
+    }
+    mutex_unlock(&agent->state_mutex);
+
+    log_debug("Async task completed for agent '%s'", agent->name);
+
+    /* Cleanup context */
+    free(task_desc);
+    free(ctx);
+}
+
 bool agent_run_async(AgentInstance* agent, const char* task_description) {
-    /* TODO: Implement async execution using thread pool */
-    log_warning("Async execution not yet implemented, falling back to sync");
-    char* result = agent_run_sync(agent, task_description);
-    free(result);
-    return result != NULL;
+    if (!agent || !task_description) return false;
+
+    /* Check if agent has a registry with thread pool */
+    if (!agent->registry || !agent->registry->thread_pool) {
+        log_warning("No thread pool available, falling back to sync execution");
+        char* result = agent_run_sync(agent, task_description);
+        free(result);
+        return result != NULL;
+    }
+
+    /* Check agent state */
+    AgentState current = agent_get_state(agent);
+    if (current != AGENT_STATE_IDLE) {
+        log_warning("Agent '%s' is not idle (state: %s)",
+                   agent->name, agent_state_to_string(current));
+        return false;
+    }
+
+    /* Check if thread is already active */
+    mutex_lock(&agent->state_mutex);
+    if (agent->thread_active) {
+        mutex_unlock(&agent->state_mutex);
+        log_warning("Agent '%s' already has an active task", agent->name);
+        return false;
+    }
+    mutex_unlock(&agent->state_mutex);
+
+    /* Create async context */
+    AsyncTaskContext* ctx = (AsyncTaskContext*)malloc(sizeof(AsyncTaskContext));
+    if (!ctx) {
+        log_error("Failed to allocate async task context");
+        return false;
+    }
+
+    ctx->agent = agent;
+    ctx->task_description = strdup(task_description);
+    if (!ctx->task_description) {
+        free(ctx);
+        log_error("Failed to allocate task description");
+        return false;
+    }
+
+    /* Submit to thread pool */
+    if (!thread_pool_submit(agent->registry->thread_pool, async_task_runner, ctx)) {
+        free(ctx->task_description);
+        free(ctx);
+        log_error("Failed to submit task to thread pool");
+        return false;
+    }
+
+    log_debug("Async task submitted for agent '%s': %s", agent->name, task_description);
+    return true;
 }
 
 const char* agent_get_result(AgentInstance* agent) {
