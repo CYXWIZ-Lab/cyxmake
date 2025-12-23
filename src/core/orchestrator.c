@@ -236,8 +236,6 @@ void cyxmake_shutdown(Orchestrator* orch) {
         return;
     }
 
-    log_debug("Shutting down CyxMake...");
-
     /* Shutdown multi-agent system first */
     if (orch->multi_agent_enabled) {
         log_debug("Shutting down multi-agent system...");

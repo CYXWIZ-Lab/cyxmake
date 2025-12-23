@@ -190,23 +190,43 @@ AgentRegistry* agent_registry_create(AIProvider* ai, ToolRegistry* tools,
 void agent_registry_free(AgentRegistry* registry) {
     if (!registry) return;
 
+    log_debug("Freeing agent registry with %zu agents...", registry->agent_count);
+
+    /* Lock and copy agent pointers to a local array */
     mutex_lock(&registry->registry_mutex);
 
-    /* Terminate and free all agents */
-    for (size_t i = 0; i < registry->agent_count; i++) {
-        if (registry->agents[i]) {
-            /* Terminate if running */
-            AgentState state = agent_get_state(registry->agents[i]);
-            if (state == AGENT_STATE_RUNNING || state == AGENT_STATE_PAUSED) {
-                agent_terminate(registry->agents[i]);
+    size_t count = registry->agent_count;
+    registry->agent_count = 0;
+
+    /* Copy agent pointers to local array before freeing to avoid
+     * potential issues with registry access during agent cleanup */
+    AgentInstance** agents_to_free = NULL;
+    if (count > 0) {
+        agents_to_free = (AgentInstance**)malloc(count * sizeof(AgentInstance*));
+        if (agents_to_free) {
+            for (size_t i = 0; i < count; i++) {
+                agents_to_free[i] = registry->agents[i];
+                registry->agents[i] = NULL;
             }
-            agent_instance_free(registry->agents[i]);
         }
     }
 
     mutex_unlock(&registry->registry_mutex);
-    mutex_destroy(&registry->registry_mutex);
 
+    /* Now free agents outside the lock */
+    if (agents_to_free) {
+        for (size_t i = 0; i < count; i++) {
+            AgentInstance* agent = agents_to_free[i];
+            if (agent) {
+                log_debug("Freeing agent '%s'...", agent->name ? agent->name : "(null)");
+                agent_instance_free(agent);
+            }
+        }
+        free(agents_to_free);
+    }
+
+    /* Final cleanup */
+    mutex_destroy(&registry->registry_mutex);
     free(registry->agents);
     free(registry->shared_memory_path);
     free(registry);
@@ -626,6 +646,7 @@ AgentState agent_get_state(AgentInstance* agent) {
     mutex_lock(&agent->state_mutex);
     AgentState state = agent->state;
     mutex_unlock(&agent->state_mutex);
+
     return state;
 }
 
@@ -955,21 +976,29 @@ void agent_terminate_children(AgentInstance* parent) {
 void agent_instance_free(AgentInstance* agent) {
     if (!agent) return;
 
+    log_debug("Freeing agent instance type=%d...", agent->type);
+
     /* Free underlying implementation */
     switch (agent->type) {
         case AGENT_TYPE_SMART:
             if (agent->impl.smart) {
+                log_debug("Freeing SmartAgent impl...");
                 smart_agent_free(agent->impl.smart);
+                agent->impl.smart = NULL;
             }
             break;
         case AGENT_TYPE_AUTONOMOUS:
             if (agent->impl.autonomous) {
+                log_debug("Freeing AutonomousAgent impl...");
                 agent_free(agent->impl.autonomous);
+                agent->impl.autonomous = NULL;
             }
             break;
         case AGENT_TYPE_BUILD:
             if (agent->impl.build) {
+                log_debug("Freeing AIBuildAgent impl...");
                 ai_build_agent_free(agent->impl.build);
+                agent->impl.build = NULL;
             }
             break;
         default:
@@ -978,11 +1007,14 @@ void agent_instance_free(AgentInstance* agent) {
 
     /* Free task if present */
     if (agent->current_task) {
+        log_debug("Freeing current task...");
         task_free(agent->current_task);
+        agent->current_task = NULL;
     }
 
     /* Free children array (not the children themselves - registry owns them) */
     free(agent->children);
+    agent->children = NULL;
 
     /* Free strings */
     free(agent->id);
@@ -991,6 +1023,9 @@ void agent_instance_free(AgentInstance* agent) {
     free(agent->last_result);
     free(agent->last_error);
 
+    log_debug("Destroying agent mutex...");
     mutex_destroy(&agent->state_mutex);
+
+    log_debug("Agent instance freed");
     free(agent);
 }

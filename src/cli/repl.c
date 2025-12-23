@@ -1485,7 +1485,9 @@ int repl_run(ReplSession* session) {
         /* Skip empty input */
         const char* p = line;
         while (*p == ' ' || *p == '\t') p++;
-        if (*p == '\0') continue;
+        if (*p == '\0') {
+            continue;
+        }
 
         /* Add to input history */
         if (session->input) {

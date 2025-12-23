@@ -82,16 +82,27 @@ int main(int argc, char** argv) {
 
     // Start interactive REPL if no arguments provided
     if (argc == 1) {
+        /* Initialize orchestrator for REPL to enable agent system */
+        Orchestrator* orch = cyxmake_init(NULL);
+        if (!orch) {
+            log_error("Failed to initialize CyxMake");
+            log_shutdown();
+            return CYXMAKE_ERROR_INTERNAL;
+        }
+
         ReplConfig config = repl_config_default();
-        ReplSession* session = repl_session_create(&config, NULL);
+        ReplSession* session = repl_session_create(&config, orch);
         if (!session) {
             log_error("Failed to create REPL session");
+            cyxmake_shutdown(orch);
             log_shutdown();
             return CYXMAKE_ERROR_INTERNAL;
         }
 
         int result = repl_run(session);
+
         repl_session_free(session);
+        cyxmake_shutdown(orch);
         log_shutdown();
         return result;
     }
