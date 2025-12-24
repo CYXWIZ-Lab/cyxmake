@@ -582,7 +582,8 @@ For detailed documentation, see:
 ## Support
 
 - **Issues**: [GitHub Issues](https://github.com/CYXWIZ-Lab/cyxmake/issues)
-- **Support the Project**: [Patreon](https://www.patreon.com/posts/cyxwiz-projects-146571889)
+- **Donate**: [See all donation options](DONATION.md)
+- **Patreon**: [Support on Patreon](https://www.patreon.com/posts/cyxwiz-projects-146571889)
 
 ---
 
