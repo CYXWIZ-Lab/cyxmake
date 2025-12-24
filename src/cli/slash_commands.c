@@ -2183,8 +2183,7 @@ bool cmd_agent(ReplSession* session, const char* args) {
                     }
                     agent_count++;
                 }
-
-                free(agents);
+                /* Note: agents array is internal to registry, do not free */
             }
         }
 
