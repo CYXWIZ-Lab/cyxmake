@@ -28,7 +28,7 @@ Recurring donations provide stable, predictable funding that helps with long-ter
 
 | Platform | Description | Link |
 |----------|-------------|------|
-| **GitHub Sponsors** | Direct GitHub integration, no fees | [Sponsor on GitHub](https://github.com/sponsors/YOUR_USERNAME) |
+| **GitHub Sponsors** | Direct GitHub integration, no fees | [Sponsor on GitHub](https://github.com/sponsors/cyxwiz-lab) |
 | **Patreon** | Membership tiers with rewards | [Support on Patreon](https://www.patreon.com/posts/cyxwiz-projects-146571889) |
 | **Open Collective** | Transparent finances, tax-deductible | [Open Collective](https://opencollective.com/YOUR_PROJECT) |
 | **Liberapay** | Privacy-focused, no platform fees | [Liberapay](https://liberapay.com/YOUR_USERNAME) |

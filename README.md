@@ -8,6 +8,7 @@
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 [![Version](https://img.shields.io/badge/version-0.2.0--beta-blue.svg)]()
+[![Sponsor](https://img.shields.io/badge/sponsor-GitHub%20Sponsors-ea4aaa.svg)](https://github.com/sponsors/cyxwiz-lab)
 [![Support on Patreon](https://img.shields.io/badge/support-Patreon-orange.svg)](https://www.patreon.com/posts/cyxwiz-projects-146571889)
 
 ---
@@ -583,6 +584,7 @@ For detailed documentation, see:
 
 - **Issues**: [GitHub Issues](https://github.com/CYXWIZ-Lab/cyxmake/issues)
 - **Donate**: [See all donation options](DONATION.md)
+- **GitHub Sponsors**: [Sponsor on GitHub](https://github.com/sponsors/cyxwiz-lab)
 - **Patreon**: [Support on Patreon](https://www.patreon.com/posts/cyxwiz-projects-146571889)
 
 ---

@@ -1,0 +1,18 @@
+{
+	"version":	1,
+	"recent_commands":	[{
+			"command":	"cmake --build .",
+			"success":	true
+		}, {
+			"command":	"ctest --output-on-failure",
+			"success":	true
+		}],
+	"error_fixes":	[{
+			"error":	"permission denied",
+			"fix":	"make install"
+		}],
+	"preferences":	{
+		"verbose":	false,
+		"parallel":	false
+	}
+}
