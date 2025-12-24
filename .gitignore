@@ -33,10 +33,19 @@ Makefile
 *~
 .DS_Store
 
-# CyxMake cache
-.cyxmake/cache/
-.cyxmake/logs/
-.cyxmake/temp/
+# Claude Code
+.claude/
+
+# CyxMake local files
+.cyxmake/
+cyxmake.toml
+
+# Test files
+test_input.txt
+test_*.txt
+
+# Demo/screenshots
+demo.png
 
 # Models (large files)
 *.gguf

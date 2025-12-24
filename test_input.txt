@@ -1,2 +1,0 @@
-list the files in the current directory
-/quit
