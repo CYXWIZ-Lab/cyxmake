@@ -30,6 +30,9 @@ set(CYXMAKE_CORE_SOURCES
     recovery/solution_generator.c
     recovery/fix_executor.c
 
+    # Phase 3: Enhanced Error Recovery (validation, verification, learning)
+    recovery/fix_validation.c
+
     # Phase 1: Tool Executor System
     tools/tool_registry.c
     tools/tool_discovery.c

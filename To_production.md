@@ -22,6 +22,8 @@
 | Cross-Platform | Stable | Windows, Linux, macOS support |
 | Security System | Stable | Permission prompts, audit logging, dry-run mode, rollback support |
 | Sandboxed Execution | Stable | Resource limits via Windows Job Objects / Unix rlimit |
+| Fix Validation | Stable | Validates fixes before applying, risk assessment |
+| Fix Learning | Stable | Records successful fixes, suggests based on history |
 
 ### Partial/Beta Features
 
@@ -59,6 +61,9 @@
 - [x] Dry-run mode to preview actions without execution
 - [x] Rollback support for file modifications
 - [x] Sandboxed command execution with resource limits
+- [x] Validate fixes before applying with risk assessment
+- [x] Incremental fix application with verification
+- [x] Learn from successful fixes for future suggestions
 
 ### What CyxMake CANNOT Reliably Do (Yet):
 - [ ] Fully autonomous "just works" builds without AI backend
@@ -100,12 +105,12 @@
 - [x] Dry-run mode for all operations
 - [x] Audit logging for all actions
 
-### Phase 3: Error Recovery (Priority: MEDIUM)
-- [ ] Validate fixes before applying
-- [ ] User confirmation for risky fixes
-- [ ] Incremental fix application
-- [ ] Fix verification (rebuild after fix)
-- [ ] Learn from successful fixes
+### Phase 3: Error Recovery (Priority: MEDIUM) ✅ COMPLETE
+- [x] Validate fixes before applying
+- [x] User confirmation for risky fixes
+- [x] Incremental fix application
+- [x] Fix verification (rebuild after fix)
+- [x] Learn from successful fixes
 
 ### Phase 4: Testing & Quality (Priority: MEDIUM)
 - [ ] Real-world project test suite
