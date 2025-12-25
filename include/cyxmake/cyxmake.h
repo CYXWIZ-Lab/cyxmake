@@ -1,7 +1,7 @@
 /**
  * @file cyxmake.h
  * @brief CyxMake - AI-Powered Build Automation System
- * @version 0.1.0
+ * @version 1.0.0
  * @license Apache-2.0
  */
 
@@ -18,10 +18,10 @@ extern "C" {
 #include <time.h>
 
 /* Version information */
-#define CYXMAKE_VERSION_MAJOR 0
-#define CYXMAKE_VERSION_MINOR 1
+#define CYXMAKE_VERSION_MAJOR 1
+#define CYXMAKE_VERSION_MINOR 0
 #define CYXMAKE_VERSION_PATCH 0
-#define CYXMAKE_VERSION "0.1.0"
+#define CYXMAKE_VERSION "1.0.0"
 
 /* Forward declarations */
 typedef struct Orchestrator Orchestrator;
