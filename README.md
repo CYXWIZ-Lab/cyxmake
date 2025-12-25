@@ -219,6 +219,9 @@ Waiting for agent 'builder' to complete...
 | `/agent set <name> <key> <val>` | Configure agent |
 | `/agent wait <name>` | Wait for agent to complete |
 | `/agent terminate <name>` | Stop an agent |
+| `/agent send <from> <to> <msg>` | Send message between agents |
+| `/agent inbox <name>` | View agent's received messages |
+| `/agent broadcast <from> <msg>` | Broadcast message to all agents |
 
 **Shared Memory (Multi-Agent State):**
 
@@ -258,6 +261,32 @@ Shared State: (3 entries)
 | `/memory state clear` | Clear all entries |
 
 State persists to `.cyxmake/agent_state.json` and loads automatically on startup.
+
+**Message Passing:**
+
+Agents can communicate via direct messages or broadcasts:
+
+```bash
+cyxmake> /agent spawn coordinator smart --mock
+cyxmake> /agent spawn builder build --mock
+cyxmake> /agent spawn tester smart --mock
+
+# Send direct message
+cyxmake> /agent send coordinator builder Start building the project
+✓ Message sent: coordinator → builder
+
+# Broadcast to all agents
+cyxmake> /agent broadcast coordinator All agents please report status
+✓ Broadcast sent from 'coordinator' to 2 agents
+
+# Check inbox
+cyxmake> /agent inbox builder
+Messages for 'builder': (2 messages)
+  [1] From: coordinator
+      Start building the project
+  [2] From: coordinator (broadcast)
+      All agents please report status
+```
 
 ### Autonomous Error Recovery
 
