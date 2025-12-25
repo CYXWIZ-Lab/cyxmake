@@ -83,12 +83,12 @@
 
 ## Roadmap to v1.0 Production
 
-### Phase 1: AI Stability (Priority: HIGH)
-- [ ] Ensure CURL is compiled by default for cloud providers
-- [ ] Add connection retry/fallback logic for AI providers
-- [ ] Implement provider health checks
-- [ ] Add offline mode with graceful degradation
-- [ ] GPU acceleration for local llama.cpp
+### Phase 1: AI Stability (Priority: HIGH) ✅ COMPLETE
+- [x] Ensure CURL is compiled by default for cloud providers
+- [x] Add connection retry/fallback logic for AI providers
+- [x] Implement provider health checks
+- [x] Add offline mode with graceful degradation
+- [x] GPU acceleration for local llama.cpp
 
 ### Phase 2: Security & Safety (Priority: HIGH)
 - [ ] Sandboxed command execution

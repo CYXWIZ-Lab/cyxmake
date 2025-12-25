@@ -173,6 +173,16 @@ typedef struct {
 typedef struct AIProvider AIProvider;
 
 /**
+ * Health check result
+ */
+typedef struct {
+    bool healthy;            /* Provider is operational */
+    int latency_ms;          /* Response time in milliseconds */
+    char* message;           /* Status message or error */
+    AIProviderStatus status; /* Current provider status */
+} AIHealthCheckResult;
+
+/**
  * Provider function table (vtable)
  */
 typedef struct {
@@ -193,6 +203,9 @@ typedef struct {
 
     /* Get last error message */
     const char* (*get_error)(AIProvider* provider);
+
+    /* Health check (optional) */
+    AIHealthCheckResult* (*health_check)(AIProvider* provider);
 } AIProviderVTable;
 
 /**
@@ -498,6 +511,276 @@ AIProvider* ai_provider_llamacpp(const char* model_path);
  * @return New provider or NULL if no provider available
  */
 AIProvider* ai_provider_from_env(void);
+
+/* ========================================================================
+ * HTTP Support Detection
+ * ======================================================================== */
+
+/**
+ * Check if HTTP support is available
+ * HTTP support is required for cloud AI providers (OpenAI, Anthropic, Gemini, Ollama)
+ * @return true if HTTP (CURL) is compiled in
+ */
+bool ai_provider_has_http_support(void);
+
+/**
+ * Get information about HTTP support status
+ * @return Human-readable string describing HTTP support status
+ */
+const char* ai_provider_http_status_message(void);
+
+/**
+ * Check if a provider type requires HTTP support
+ * @param type Provider type to check
+ * @return true if provider requires HTTP (cloud providers)
+ */
+bool ai_provider_type_requires_http(AIProviderType type);
+
+/* ========================================================================
+ * Retry and Fallback Support
+ * ======================================================================== */
+
+/**
+ * Retry configuration for AI provider requests
+ */
+typedef struct {
+    int max_retries;           /* Maximum retry attempts (default: 3) */
+    int initial_delay_ms;      /* Initial delay between retries in ms (default: 1000) */
+    int max_delay_ms;          /* Maximum delay between retries in ms (default: 30000) */
+    float backoff_multiplier;  /* Exponential backoff multiplier (default: 2.0) */
+    bool retry_on_timeout;     /* Retry on timeout errors (default: true) */
+    bool retry_on_rate_limit;  /* Retry on rate limit errors (default: true) */
+    bool retry_on_server_error; /* Retry on 5xx errors (default: true) */
+} AIRetryConfig;
+
+/**
+ * Get default retry configuration
+ * @return Default retry config (3 retries, 1s initial delay, 2x backoff)
+ */
+AIRetryConfig ai_retry_config_default(void);
+
+/**
+ * Send completion request with retry support
+ * @param provider Provider to use
+ * @param request Request to send
+ * @param retry_config Retry configuration (NULL for defaults)
+ * @return Response (caller must free with ai_response_free)
+ */
+AIResponse* ai_provider_complete_with_retry(AIProvider* provider,
+                                             const AIRequest* request,
+                                             const AIRetryConfig* retry_config);
+
+/**
+ * Send completion request with fallback to alternative providers
+ * Tries providers in order: primary, fallback from registry, then all enabled providers
+ * @param registry Provider registry
+ * @param request Request to send
+ * @param primary_provider Primary provider name (NULL for default)
+ * @param retry_config Retry configuration for each provider (NULL for defaults)
+ * @return Response (caller must free with ai_response_free)
+ */
+AIResponse* ai_registry_complete_with_fallback(AIProviderRegistry* registry,
+                                                const AIRequest* request,
+                                                const char* primary_provider,
+                                                const AIRetryConfig* retry_config);
+
+/**
+ * Set the fallback provider in registry
+ * @param registry Provider registry
+ * @param name Fallback provider name
+ * @return true on success
+ */
+bool ai_registry_set_fallback(AIProviderRegistry* registry, const char* name);
+
+/**
+ * Get the fallback provider from registry
+ * @param registry Provider registry
+ * @return Fallback provider or NULL
+ */
+AIProvider* ai_registry_get_fallback(AIProviderRegistry* registry);
+
+/* ========================================================================
+ * Health Check Support
+ * ======================================================================== */
+
+/**
+ * Free health check result
+ * @param result Result to free
+ */
+void ai_health_check_free(AIHealthCheckResult* result);
+
+/**
+ * Perform health check on a provider
+ * Sends a minimal request to verify the provider is operational
+ * @param provider Provider to check
+ * @return Health check result (caller must free with ai_health_check_free)
+ */
+AIHealthCheckResult* ai_provider_health_check(AIProvider* provider);
+
+/**
+ * Check health of all providers in registry
+ * @param registry Provider registry
+ * @param results Output array of health check results (caller provides array)
+ * @param names Output array of provider names (caller provides array)
+ * @param max_count Maximum number of providers to check
+ * @return Number of providers checked
+ */
+int ai_registry_health_check_all(AIProviderRegistry* registry,
+                                  AIHealthCheckResult** results,
+                                  const char** names,
+                                  int max_count);
+
+/**
+ * Find first healthy provider in registry
+ * @param registry Provider registry
+ * @return First healthy provider or NULL if none healthy
+ */
+AIProvider* ai_registry_find_healthy(AIProviderRegistry* registry);
+
+/**
+ * Print health status report for all providers
+ * @param registry Provider registry
+ */
+void ai_registry_print_health_report(AIProviderRegistry* registry);
+
+/* ========================================================================
+ * Offline Mode Support
+ * ======================================================================== */
+
+/**
+ * Offline mode status
+ */
+typedef enum {
+    AI_NETWORK_ONLINE,       /* Network available, providers working */
+    AI_NETWORK_DEGRADED,     /* Some providers failing, fallbacks in use */
+    AI_NETWORK_OFFLINE,      /* All cloud providers unavailable */
+    AI_NETWORK_LOCAL_ONLY    /* Only local llama.cpp available */
+} AINetworkStatus;
+
+/**
+ * Offline mode configuration
+ */
+typedef struct {
+    bool enabled;                    /* Enable offline mode graceful degradation */
+    bool use_cached_responses;       /* Use cached responses when available */
+    bool provide_generic_help;       /* Provide generic help responses */
+    int cache_ttl_sec;               /* Cache time-to-live in seconds */
+    const char* cache_path;          /* Path to response cache file */
+} AIOfflineModeConfig;
+
+/**
+ * Get default offline mode configuration
+ * @return Default config with offline mode enabled
+ */
+AIOfflineModeConfig ai_offline_config_default(void);
+
+/**
+ * Check network/provider status
+ * @param registry Provider registry
+ * @return Network status
+ */
+AINetworkStatus ai_registry_check_network_status(AIProviderRegistry* registry);
+
+/**
+ * Get human-readable network status message
+ * @param status Network status
+ * @return Status message string
+ */
+const char* ai_network_status_message(AINetworkStatus status);
+
+/**
+ * Complete request with offline mode support
+ * Falls back to cached/generic responses when providers unavailable
+ * @param registry Provider registry
+ * @param request Request to send
+ * @param offline_config Offline mode configuration (NULL for defaults)
+ * @param retry_config Retry configuration (NULL for defaults)
+ * @return Response (caller must free with ai_response_free)
+ */
+AIResponse* ai_registry_complete_offline_aware(AIProviderRegistry* registry,
+                                                const AIRequest* request,
+                                                const AIOfflineModeConfig* offline_config,
+                                                const AIRetryConfig* retry_config);
+
+/**
+ * Generate offline fallback response
+ * Returns a helpful response explaining the offline situation
+ * @param request Original request
+ * @param status Network status
+ * @return Response with offline message (caller must free)
+ */
+AIResponse* ai_generate_offline_response(const AIRequest* request,
+                                          AINetworkStatus status);
+
+/* ========================================================================
+ * GPU Acceleration Support
+ * ======================================================================== */
+
+/**
+ * GPU backend type
+ */
+typedef enum {
+    AI_GPU_NONE = 0,     /* CPU only */
+    AI_GPU_CUDA,         /* NVIDIA CUDA */
+    AI_GPU_VULKAN,       /* Vulkan (cross-platform) */
+    AI_GPU_METAL,        /* Apple Metal */
+    AI_GPU_OPENCL        /* OpenCL */
+} AIGPUBackend;
+
+/**
+ * GPU information
+ */
+typedef struct {
+    AIGPUBackend backend;        /* Active GPU backend */
+    bool available;              /* GPU is available for use */
+    char* device_name;           /* GPU device name (if available) */
+    int memory_mb;               /* GPU memory in MB (if available) */
+    int recommended_layers;      /* Recommended layers to offload */
+} AIGPUInfo;
+
+/**
+ * Check which GPU backend is compiled in
+ * @return Active GPU backend type
+ */
+AIGPUBackend ai_get_gpu_backend(void);
+
+/**
+ * Get GPU backend name as string
+ * @param backend GPU backend type
+ * @return Backend name string
+ */
+const char* ai_gpu_backend_name(AIGPUBackend backend);
+
+/**
+ * Check if GPU acceleration is available
+ * @return true if GPU support is compiled in
+ */
+bool ai_has_gpu_support(void);
+
+/**
+ * Get GPU information
+ * @return GPU info (caller must free with ai_gpu_info_free)
+ */
+AIGPUInfo* ai_get_gpu_info(void);
+
+/**
+ * Free GPU info
+ * @param info GPU info to free
+ */
+void ai_gpu_info_free(AIGPUInfo* info);
+
+/**
+ * Get recommended number of GPU layers for a model
+ * Based on available GPU memory and model size
+ * @param model_size_mb Approximate model size in MB
+ * @return Recommended number of layers to offload (0 for CPU only)
+ */
+int ai_recommend_gpu_layers(int model_size_mb);
+
+/**
+ * Print GPU status report
+ */
+void ai_print_gpu_status(void);
 
 #ifdef __cplusplus
 }

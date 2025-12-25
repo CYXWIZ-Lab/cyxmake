@@ -21,6 +21,7 @@ option(CYXMAKE_BUILD_TESTS "Build test suite" ON)
 option(CYXMAKE_BUILD_TOOLS "Build bundled tools" ON)
 option(CYXMAKE_USE_SANITIZERS "Enable address sanitizer" OFF)
 option(CYXMAKE_STATIC_LINK "Static linking" OFF)
+option(CYXMAKE_REQUIRE_CURL "Require CURL for cloud AI providers (fail if not found)" OFF)
 
 # GPU acceleration options (passed to llama.cpp/ggml)
 option(CYXMAKE_GPU_CUDA "Enable CUDA GPU acceleration (NVIDIA)" OFF)
@@ -76,14 +77,32 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 include_directories(${CMAKE_SOURCE_DIR}/include)
 include_directories(${CMAKE_SOURCE_DIR}/external)
 
-# Find optional packages
+# Find CURL for cloud AI providers
 find_package(CURL QUIET)
 if(CURL_FOUND)
     message(STATUS "Found CURL: ${CURL_LIBRARIES}")
     set(HAVE_CURL TRUE)
 else()
-    message(STATUS "CURL not found - cloud API support will be disabled")
     set(HAVE_CURL FALSE)
+    if(CYXMAKE_REQUIRE_CURL)
+        message(FATAL_ERROR
+            "CURL not found but CYXMAKE_REQUIRE_CURL is ON.\n"
+            "Cloud AI providers (OpenAI, Anthropic, Gemini, Ollama) require CURL.\n"
+            "To install CURL:\n"
+            "  - Windows: vcpkg install curl:x64-windows OR winget install curl\n"
+            "  - macOS:   brew install curl\n"
+            "  - Ubuntu:  sudo apt install libcurl4-openssl-dev\n"
+            "  - Fedora:  sudo dnf install libcurl-devel\n"
+            "Or disable this requirement: cmake -DCYXMAKE_REQUIRE_CURL=OFF ..")
+    else()
+        message(WARNING
+            "CURL not found - cloud AI providers will be disabled.\n"
+            "Only local llama.cpp inference will be available.\n"
+            "To enable cloud AI providers, install CURL:\n"
+            "  - Windows: vcpkg install curl:x64-windows\n"
+            "  - macOS:   brew install curl\n"
+            "  - Linux:   sudo apt install libcurl4-openssl-dev (or equivalent)")
+    endif()
 endif()
 
 # Add external dependencies
@@ -138,4 +157,8 @@ message(STATUS "GPU CUDA:         ${CYXMAKE_GPU_CUDA}")
 message(STATUS "GPU Vulkan:       ${CYXMAKE_GPU_VULKAN}")
 message(STATUS "GPU Metal:        ${CYXMAKE_GPU_METAL}")
 message(STATUS "GPU OpenCL:       ${CYXMAKE_GPU_OPENCL}")
+message(STATUS "CURL (HTTP):      ${HAVE_CURL}")
+if(NOT HAVE_CURL)
+    message(STATUS "  (Cloud AI providers disabled - install CURL to enable)")
+endif()
 message(STATUS "")

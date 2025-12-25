@@ -565,8 +565,21 @@ static AIProviderVTable* get_gemini_vtable(void);
 static AIProviderVTable* get_anthropic_vtable(void);
 static AIProviderVTable* get_llamacpp_vtable(void);
 
+/* Forward declarations for HTTP support functions */
+bool ai_provider_has_http_support(void);
+bool ai_provider_type_requires_http(AIProviderType type);
+
 AIProvider* ai_provider_create(const AIProviderConfig* config) {
     if (!config) return NULL;
+
+    /* Check if this provider type requires HTTP but CURL is not available */
+    if (ai_provider_type_requires_http(config->type) && !ai_provider_has_http_support()) {
+        log_warning("Creating provider '%s' (type: %s) but HTTP support not available.",
+                    config->name ? config->name : "unknown",
+                    ai_provider_type_to_string(config->type));
+        log_warning("Cloud AI providers require CURL. Requests will fail.");
+        log_warning("To fix: rebuild CyxMake with CURL installed.");
+    }
 
     AIProvider* provider = calloc(1, sizeof(AIProvider));
     if (!provider) return NULL;
@@ -1361,7 +1374,8 @@ static AIProviderVTable openai_vtable = {
     .is_ready = openai_is_ready,
     .complete = openai_complete,
     .get_status = openai_get_status,
-    .get_error = openai_get_error
+    .get_error = openai_get_error,
+    .health_check = NULL  /* Use default health check */
 };
 
 static AIProviderVTable* get_openai_vtable(void) {
@@ -1535,7 +1549,8 @@ static AIProviderVTable ollama_vtable = {
     .is_ready = openai_is_ready,
     .complete = ollama_complete,
     .get_status = openai_get_status,
-    .get_error = openai_get_error
+    .get_error = openai_get_error,
+    .health_check = NULL  /* Use default health check */
 };
 
 static AIProviderVTable* get_ollama_vtable(void) {
@@ -1768,7 +1783,8 @@ static AIProviderVTable gemini_vtable = {
     .is_ready = openai_is_ready,
     .complete = gemini_complete,
     .get_status = openai_get_status,
-    .get_error = openai_get_error
+    .get_error = openai_get_error,
+    .health_check = NULL  /* Use default health check */
 };
 
 static AIProviderVTable* get_gemini_vtable(void) {
@@ -2053,7 +2069,8 @@ static AIProviderVTable anthropic_vtable = {
     .is_ready = openai_is_ready,
     .complete = anthropic_complete,
     .get_status = openai_get_status,
-    .get_error = openai_get_error
+    .get_error = openai_get_error,
+    .health_check = NULL  /* Use default health check */
 };
 
 static AIProviderVTable* get_anthropic_vtable(void) {
@@ -2095,9 +2112,930 @@ static AIProviderVTable llamacpp_vtable = {
     .is_ready = openai_is_ready,
     .complete = llamacpp_complete,
     .get_status = openai_get_status,
-    .get_error = openai_get_error
+    .get_error = openai_get_error,
+    .health_check = NULL  /* Use default health check */
 };
 
 static AIProviderVTable* get_llamacpp_vtable(void) {
     return &llamacpp_vtable;
+}
+
+/* ========================================================================
+ * HTTP Support Detection
+ * ======================================================================== */
+
+bool ai_provider_has_http_support(void) {
+#ifdef CYXMAKE_USE_CURL
+    return true;
+#else
+    return false;
+#endif
+}
+
+const char* ai_provider_http_status_message(void) {
+#ifdef CYXMAKE_USE_CURL
+    return "HTTP support available (CURL compiled in). Cloud AI providers enabled.";
+#else
+    return "HTTP support NOT available (CURL not compiled in).\n"
+           "Cloud AI providers (OpenAI, Anthropic, Gemini, Ollama) are disabled.\n"
+           "Only local llama.cpp inference is available.\n"
+           "To enable cloud providers, rebuild with CURL:\n"
+           "  Windows: vcpkg install curl:x64-windows\n"
+           "  macOS:   brew install curl\n"
+           "  Linux:   sudo apt install libcurl4-openssl-dev";
+#endif
+}
+
+bool ai_provider_type_requires_http(AIProviderType type) {
+    switch (type) {
+        case AI_PROVIDER_OPENAI:
+        case AI_PROVIDER_GEMINI:
+        case AI_PROVIDER_ANTHROPIC:
+        case AI_PROVIDER_OLLAMA:
+        case AI_PROVIDER_CUSTOM:
+            return true;
+        case AI_PROVIDER_LLAMACPP:
+        case AI_PROVIDER_NONE:
+        default:
+            return false;
+    }
+}
+
+/* ========================================================================
+ * Retry and Fallback Support
+ * ======================================================================== */
+
+/* Cross-platform sleep function */
+static void ai_sleep_ms(int milliseconds) {
+#ifdef _WIN32
+    Sleep(milliseconds);
+#else
+    usleep(milliseconds * 1000);
+#endif
+}
+
+/* Check if error is retryable */
+static bool is_retryable_error(const AIResponse* response, const AIRetryConfig* config) {
+    if (!response || !response->error) return false;
+
+    const char* error = response->error;
+
+    /* Timeout errors */
+    if (config->retry_on_timeout) {
+        if (strstr(error, "timeout") || strstr(error, "Timeout") ||
+            strstr(error, "TIMEOUT") || strstr(error, "timed out")) {
+            return true;
+        }
+    }
+
+    /* Rate limit errors */
+    if (config->retry_on_rate_limit) {
+        if (strstr(error, "rate limit") || strstr(error, "Rate limit") ||
+            strstr(error, "429") || strstr(error, "too many requests") ||
+            strstr(error, "Too Many Requests")) {
+            return true;
+        }
+    }
+
+    /* Server errors (5xx) */
+    if (config->retry_on_server_error) {
+        if (strstr(error, "500") || strstr(error, "502") ||
+            strstr(error, "503") || strstr(error, "504") ||
+            strstr(error, "Internal Server Error") ||
+            strstr(error, "Bad Gateway") ||
+            strstr(error, "Service Unavailable") ||
+            strstr(error, "Gateway Timeout") ||
+            strstr(error, "server error")) {
+            return true;
+        }
+    }
+
+    /* Connection errors (always retry) */
+    if (strstr(error, "connection") || strstr(error, "Connection") ||
+        strstr(error, "network") || strstr(error, "Network") ||
+        strstr(error, "CURLE_") || strstr(error, "Could not resolve")) {
+        return true;
+    }
+
+    return false;
+}
+
+AIRetryConfig ai_retry_config_default(void) {
+    AIRetryConfig config = {
+        .max_retries = 3,
+        .initial_delay_ms = 1000,
+        .max_delay_ms = 30000,
+        .backoff_multiplier = 2.0f,
+        .retry_on_timeout = true,
+        .retry_on_rate_limit = true,
+        .retry_on_server_error = true
+    };
+    return config;
+}
+
+AIResponse* ai_provider_complete_with_retry(AIProvider* provider,
+                                             const AIRequest* request,
+                                             const AIRetryConfig* retry_config) {
+    if (!provider || !request) return NULL;
+
+    AIRetryConfig config = retry_config ? *retry_config : ai_retry_config_default();
+    int delay_ms = config.initial_delay_ms;
+
+    AIResponse* response = NULL;
+
+    for (int attempt = 0; attempt <= config.max_retries; attempt++) {
+        /* Free previous failed response */
+        if (response) {
+            ai_response_free(response);
+            response = NULL;
+        }
+
+        /* Log retry attempt */
+        if (attempt > 0) {
+            log_info("Retry attempt %d/%d for provider '%s' (delay: %dms)",
+                     attempt, config.max_retries,
+                     provider->config.name ? provider->config.name : "unknown",
+                     delay_ms);
+            ai_sleep_ms(delay_ms);
+
+            /* Calculate next delay with exponential backoff */
+            delay_ms = (int)(delay_ms * config.backoff_multiplier);
+            if (delay_ms > config.max_delay_ms) {
+                delay_ms = config.max_delay_ms;
+            }
+        }
+
+        /* Make the request */
+        response = ai_provider_complete(provider, request);
+
+        /* Success - return immediately */
+        if (response && response->success) {
+            if (attempt > 0) {
+                log_info("Request succeeded after %d retries", attempt);
+            }
+            return response;
+        }
+
+        /* Check if we should retry */
+        if (!is_retryable_error(response, &config)) {
+            log_debug("Error is not retryable: %s",
+                      response && response->error ? response->error : "unknown");
+            break;
+        }
+
+        /* Log the retryable error */
+        log_warning("Retryable error from provider '%s': %s",
+                    provider->config.name ? provider->config.name : "unknown",
+                    response && response->error ? response->error : "unknown");
+    }
+
+    /* If we get here, all retries failed */
+    if (response && !response->success) {
+        log_error("All %d retries exhausted for provider '%s'",
+                  config.max_retries + 1,
+                  provider->config.name ? provider->config.name : "unknown");
+    }
+
+    return response;
+}
+
+bool ai_registry_set_fallback(AIProviderRegistry* registry, const char* name) {
+    if (!registry || !name) return false;
+
+    AIProvider* provider = ai_registry_get(registry, name);
+    if (!provider) return false;
+
+    free(registry->fallback_provider);
+    registry->fallback_provider = strdup(name);
+    return true;
+}
+
+AIProvider* ai_registry_get_fallback(AIProviderRegistry* registry) {
+    if (!registry || !registry->fallback_provider) return NULL;
+
+    return ai_registry_get(registry, registry->fallback_provider);
+}
+
+/* Maximum providers to try during fallback */
+#define AI_MAX_FALLBACK_PROVIDERS 16
+
+AIResponse* ai_registry_complete_with_fallback(AIProviderRegistry* registry,
+                                                const AIRequest* request,
+                                                const char* primary_provider,
+                                                const AIRetryConfig* retry_config) {
+    if (!registry || !request) return NULL;
+
+    /* Get providers to try */
+    AIProvider* providers[AI_MAX_FALLBACK_PROVIDERS];
+    const char* provider_names[AI_MAX_FALLBACK_PROVIDERS];
+    int provider_count = 0;
+
+    /* 1. Primary provider (if specified) */
+    if (primary_provider) {
+        AIProvider* primary = ai_registry_get(registry, primary_provider);
+        if (primary && primary->config.enabled) {
+            providers[provider_count] = primary;
+            provider_names[provider_count] = primary_provider;
+            provider_count++;
+        }
+    }
+
+    /* 2. Default provider (if different from primary) */
+    AIProvider* default_provider = ai_registry_get_default(registry);
+    if (default_provider && default_provider->config.enabled) {
+        bool already_added = false;
+        for (int i = 0; i < provider_count; i++) {
+            if (providers[i] == default_provider) {
+                already_added = true;
+                break;
+            }
+        }
+        if (!already_added && provider_count < AI_MAX_FALLBACK_PROVIDERS) {
+            providers[provider_count] = default_provider;
+            provider_names[provider_count] = default_provider->config.name;
+            provider_count++;
+        }
+    }
+
+    /* 3. Fallback provider (if set and different) */
+    AIProvider* fallback = ai_registry_get_fallback(registry);
+    if (fallback && fallback->config.enabled) {
+        bool already_added = false;
+        for (int i = 0; i < provider_count; i++) {
+            if (providers[i] == fallback) {
+                already_added = true;
+                break;
+            }
+        }
+        if (!already_added && provider_count < AI_MAX_FALLBACK_PROVIDERS) {
+            providers[provider_count] = fallback;
+            provider_names[provider_count] = fallback->config.name;
+            provider_count++;
+        }
+    }
+
+    /* 4. All other enabled providers */
+    const char* all_names[AI_MAX_FALLBACK_PROVIDERS];
+    int total = ai_registry_list(registry, all_names, AI_MAX_FALLBACK_PROVIDERS);
+    for (int i = 0; i < total && provider_count < AI_MAX_FALLBACK_PROVIDERS; i++) {
+        AIProvider* p = ai_registry_get(registry, all_names[i]);
+        if (p && p->config.enabled) {
+            bool already_added = false;
+            for (int j = 0; j < provider_count; j++) {
+                if (providers[j] == p) {
+                    already_added = true;
+                    break;
+                }
+            }
+            if (!already_added) {
+                providers[provider_count] = p;
+                provider_names[provider_count] = all_names[i];
+                provider_count++;
+            }
+        }
+    }
+
+    if (provider_count == 0) {
+        AIResponse* response = calloc(1, sizeof(AIResponse));
+        response->success = false;
+        response->error = strdup("No enabled AI providers available");
+        return response;
+    }
+
+    /* Try each provider in order */
+    AIResponse* last_response = NULL;
+    for (int i = 0; i < provider_count; i++) {
+        /* Free previous failed response */
+        if (last_response) {
+            ai_response_free(last_response);
+            last_response = NULL;
+        }
+
+        log_info("Trying provider '%s' (%d/%d)",
+                 provider_names[i], i + 1, provider_count);
+
+        /* Initialize provider if needed */
+        if (!ai_provider_is_ready(providers[i])) {
+            if (!ai_provider_init(providers[i])) {
+                log_warning("Failed to initialize provider '%s', skipping",
+                           provider_names[i]);
+                continue;
+            }
+        }
+
+        /* Try with retry logic */
+        last_response = ai_provider_complete_with_retry(providers[i], request, retry_config);
+
+        /* Success! */
+        if (last_response && last_response->success) {
+            if (i > 0) {
+                log_info("Request succeeded with fallback provider '%s'",
+                         provider_names[i]);
+            }
+            return last_response;
+        }
+
+        /* Log failure and try next */
+        log_warning("Provider '%s' failed: %s",
+                    provider_names[i],
+                    last_response && last_response->error ? last_response->error : "unknown error");
+    }
+
+    /* All providers failed */
+    log_error("All %d providers failed to complete request", provider_count);
+
+    if (!last_response) {
+        last_response = calloc(1, sizeof(AIResponse));
+        last_response->success = false;
+        last_response->error = strdup("All providers failed");
+    }
+
+    return last_response;
+}
+
+/* ========================================================================
+ * Health Check Support
+ * ======================================================================== */
+
+/* Get current time in milliseconds */
+static long get_time_ms(void) {
+#ifdef _WIN32
+    return (long)GetTickCount64();
+#else
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000 + tv.tv_usec / 1000;
+#endif
+}
+
+void ai_health_check_free(AIHealthCheckResult* result) {
+    if (!result) return;
+    free(result->message);
+    free(result);
+}
+
+AIHealthCheckResult* ai_provider_health_check(AIProvider* provider) {
+    AIHealthCheckResult* result = calloc(1, sizeof(AIHealthCheckResult));
+    if (!result) return NULL;
+
+    if (!provider) {
+        result->healthy = false;
+        result->status = PROVIDER_STATUS_UNKNOWN;
+        result->message = strdup("Provider is NULL");
+        return result;
+    }
+
+    /* Check if provider has custom health check */
+    if (provider->vtable && provider->vtable->health_check) {
+        AIHealthCheckResult* custom_result = provider->vtable->health_check(provider);
+        if (custom_result) {
+            free(result);
+            return custom_result;
+        }
+    }
+
+    /* Default health check: try a minimal completion request */
+    result->status = ai_provider_status(provider);
+
+    /* Check if provider is ready */
+    if (!ai_provider_is_ready(provider)) {
+        /* Try to initialize */
+        if (!ai_provider_init(provider)) {
+            result->healthy = false;
+            result->message = strdup(provider->last_error ? provider->last_error :
+                                     "Failed to initialize provider");
+            return result;
+        }
+        result->status = ai_provider_status(provider);
+    }
+
+    /* Check HTTP support for cloud providers */
+    if (ai_provider_type_requires_http(provider->config.type) &&
+        !ai_provider_has_http_support()) {
+        result->healthy = false;
+        result->message = strdup("HTTP support not available (CURL not compiled)");
+        result->status = PROVIDER_STATUS_ERROR;
+        return result;
+    }
+
+    /* Send a minimal test request */
+    long start_time = get_time_ms();
+
+    AIRequest* request = ai_request_create();
+    if (!request) {
+        result->healthy = false;
+        result->message = strdup("Failed to create test request");
+        return result;
+    }
+
+    ai_request_add_message(request, AI_ROLE_USER, "Reply with: OK");
+    request->max_tokens = 10;  /* Minimal response */
+
+    AIResponse* response = ai_provider_complete(provider, request);
+    ai_request_free(request);
+
+    long end_time = get_time_ms();
+    result->latency_ms = (int)(end_time - start_time);
+
+    if (response && response->success) {
+        result->healthy = true;
+        result->status = PROVIDER_STATUS_READY;
+
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Healthy (latency: %dms)", result->latency_ms);
+        result->message = strdup(msg);
+    } else {
+        result->healthy = false;
+        result->status = PROVIDER_STATUS_ERROR;
+        result->message = strdup(response && response->error ?
+                                 response->error : "Health check failed");
+    }
+
+    ai_response_free(response);
+    return result;
+}
+
+int ai_registry_health_check_all(AIProviderRegistry* registry,
+                                  AIHealthCheckResult** results,
+                                  const char** names,
+                                  int max_count) {
+    if (!registry || !results || !names || max_count <= 0) return 0;
+
+    const char* provider_names[AI_MAX_FALLBACK_PROVIDERS];
+    int total = ai_registry_list(registry, provider_names, AI_MAX_FALLBACK_PROVIDERS);
+
+    int count = 0;
+    for (int i = 0; i < total && count < max_count; i++) {
+        AIProvider* provider = ai_registry_get(registry, provider_names[i]);
+        if (provider) {
+            names[count] = provider_names[i];
+            results[count] = ai_provider_health_check(provider);
+            count++;
+        }
+    }
+
+    return count;
+}
+
+AIProvider* ai_registry_find_healthy(AIProviderRegistry* registry) {
+    if (!registry) return NULL;
+
+    const char* names[AI_MAX_FALLBACK_PROVIDERS];
+    int total = ai_registry_list(registry, names, AI_MAX_FALLBACK_PROVIDERS);
+
+    for (int i = 0; i < total; i++) {
+        AIProvider* provider = ai_registry_get(registry, names[i]);
+        if (provider && provider->config.enabled) {
+            AIHealthCheckResult* result = ai_provider_health_check(provider);
+            bool healthy = result && result->healthy;
+            ai_health_check_free(result);
+
+            if (healthy) {
+                return provider;
+            }
+        }
+    }
+
+    return NULL;
+}
+
+void ai_registry_print_health_report(AIProviderRegistry* registry) {
+    if (!registry) {
+        log_error("No provider registry");
+        return;
+    }
+
+    const char* names[AI_MAX_FALLBACK_PROVIDERS];
+    int total = ai_registry_list(registry, names, AI_MAX_FALLBACK_PROVIDERS);
+
+    if (total == 0) {
+        log_info("No AI providers configured");
+        return;
+    }
+
+    log_info("=== AI Provider Health Report ===");
+    log_info("Providers: %d", total);
+    log_info("");
+
+    int healthy_count = 0;
+    for (int i = 0; i < total; i++) {
+        AIProvider* provider = ai_registry_get(registry, names[i]);
+        if (!provider) continue;
+
+        AIHealthCheckResult* result = ai_provider_health_check(provider);
+
+        const char* status_icon = result && result->healthy ? "[OK]" : "[FAIL]";
+        const char* type_str = ai_provider_type_to_string(provider->config.type);
+
+        if (result && result->healthy) {
+            log_success("  %s %s (%s): %s",
+                       status_icon, names[i], type_str,
+                       result->message ? result->message : "healthy");
+            healthy_count++;
+        } else {
+            log_error("  %s %s (%s): %s",
+                     status_icon, names[i], type_str,
+                     result && result->message ? result->message : "unhealthy");
+        }
+
+        ai_health_check_free(result);
+    }
+
+    log_info("");
+    log_info("Summary: %d/%d providers healthy", healthy_count, total);
+
+    if (healthy_count == 0) {
+        log_warning("No healthy providers! Check configuration and network.");
+    }
+}
+
+/* ========================================================================
+ * Offline Mode Support
+ * ======================================================================== */
+
+AIOfflineModeConfig ai_offline_config_default(void) {
+    AIOfflineModeConfig config = {
+        .enabled = true,
+        .use_cached_responses = true,
+        .provide_generic_help = true,
+        .cache_ttl_sec = 3600,  /* 1 hour */
+        .cache_path = ".cyxmake/ai_cache.json"
+    };
+    return config;
+}
+
+AINetworkStatus ai_registry_check_network_status(AIProviderRegistry* registry) {
+    if (!registry) {
+        return AI_NETWORK_OFFLINE;
+    }
+
+    const char* names[AI_MAX_FALLBACK_PROVIDERS];
+    int total = ai_registry_list(registry, names, AI_MAX_FALLBACK_PROVIDERS);
+
+    if (total == 0) {
+        return AI_NETWORK_OFFLINE;
+    }
+
+    int cloud_count = 0;
+    int cloud_healthy = 0;
+    int local_count = 0;
+    int local_healthy = 0;
+
+    for (int i = 0; i < total; i++) {
+        AIProvider* provider = ai_registry_get(registry, names[i]);
+        if (!provider || !provider->config.enabled) continue;
+
+        bool is_local = (provider->config.type == AI_PROVIDER_LLAMACPP);
+
+        /* Quick health check without sending request */
+        bool healthy = false;
+
+        if (is_local) {
+            /* Local provider: check if model path exists */
+            healthy = provider->config.model_path != NULL;
+            local_count++;
+            if (healthy) local_healthy++;
+        } else {
+            /* Cloud provider: check HTTP support and basic config */
+            if (ai_provider_has_http_support()) {
+                healthy = ai_provider_is_ready(provider);
+            }
+            cloud_count++;
+            if (healthy) cloud_healthy++;
+        }
+    }
+
+    /* Determine overall status */
+    if (cloud_count == 0 && local_count == 0) {
+        return AI_NETWORK_OFFLINE;
+    }
+
+    if (cloud_healthy > 0) {
+        if (cloud_healthy == cloud_count) {
+            return AI_NETWORK_ONLINE;
+        } else {
+            return AI_NETWORK_DEGRADED;
+        }
+    }
+
+    if (local_healthy > 0) {
+        return AI_NETWORK_LOCAL_ONLY;
+    }
+
+    return AI_NETWORK_OFFLINE;
+}
+
+const char* ai_network_status_message(AINetworkStatus status) {
+    switch (status) {
+        case AI_NETWORK_ONLINE:
+            return "All AI providers are online and operational.";
+        case AI_NETWORK_DEGRADED:
+            return "Some AI providers are unavailable. Using fallbacks.";
+        case AI_NETWORK_OFFLINE:
+            return "No AI providers available. Operating in offline mode.";
+        case AI_NETWORK_LOCAL_ONLY:
+            return "Cloud providers unavailable. Using local llama.cpp only.";
+        default:
+            return "Unknown network status.";
+    }
+}
+
+AIResponse* ai_generate_offline_response(const AIRequest* request,
+                                          AINetworkStatus status) {
+    AIResponse* response = calloc(1, sizeof(AIResponse));
+    if (!response) return NULL;
+
+    /* Generate helpful offline message based on status and request */
+    const char* user_msg = NULL;
+    if (request && request->message_count > 0) {
+        /* Find last user message */
+        for (int i = request->message_count - 1; i >= 0; i--) {
+            if (request->messages[i].role == AI_ROLE_USER) {
+                user_msg = request->messages[i].content;
+                break;
+            }
+        }
+    }
+
+    char* content = malloc(2048);
+    if (!content) {
+        free(response);
+        return NULL;
+    }
+
+    int offset = 0;
+
+    /* Status header */
+    offset += snprintf(content + offset, 2048 - offset,
+        "[Offline Mode]\n\n");
+
+    /* Status message */
+    offset += snprintf(content + offset, 2048 - offset,
+        "%s\n\n", ai_network_status_message(status));
+
+    /* Generic helpful response */
+    switch (status) {
+        case AI_NETWORK_OFFLINE:
+            offset += snprintf(content + offset, 2048 - offset,
+                "CyxMake cannot provide AI-powered assistance without a configured provider.\n\n"
+                "To enable AI features:\n"
+                "1. Configure a cloud provider in cyxmake.toml:\n"
+                "   [ai.providers.openai]\n"
+                "   type = \"openai\"\n"
+                "   api_key = \"${OPENAI_API_KEY}\"\n"
+                "   enabled = true\n\n"
+                "2. Or start Ollama locally:\n"
+                "   ollama run llama2\n\n"
+                "3. Or configure a local llama.cpp model:\n"
+                "   [ai.providers.local]\n"
+                "   type = \"llamacpp\"\n"
+                "   model_path = \"path/to/model.gguf\"\n\n"
+                "Meanwhile, CyxMake's built-in tools and project analysis are still available.\n");
+            break;
+
+        case AI_NETWORK_LOCAL_ONLY:
+            offset += snprintf(content + offset, 2048 - offset,
+                "Cloud AI providers are currently unavailable.\n\n"
+                "Local llama.cpp is available but may be slower.\n"
+                "For better performance, ensure internet connectivity and check:\n"
+                "- API keys are correctly configured\n"
+                "- Firewall is not blocking outbound connections\n"
+                "- Provider services are operational\n");
+            break;
+
+        case AI_NETWORK_DEGRADED:
+            offset += snprintf(content + offset, 2048 - offset,
+                "Some AI providers are experiencing issues.\n"
+                "CyxMake is using available fallback providers.\n"
+                "Run '/ai health' to see provider status.\n");
+            break;
+
+        default:
+            break;
+    }
+
+    /* Include original query if provided */
+    if (user_msg && strlen(user_msg) > 0 && strlen(user_msg) < 200) {
+        offset += snprintf(content + offset, 2048 - offset,
+            "\nYour query: \"%s\"\n"
+            "This query requires AI processing and cannot be handled offline.\n",
+            user_msg);
+    }
+
+    response->success = false;  /* Mark as failed since we couldn't process */
+    response->content = content;
+    response->error = strdup("AI providers unavailable - offline mode response");
+
+    return response;
+}
+
+AIResponse* ai_registry_complete_offline_aware(AIProviderRegistry* registry,
+                                                const AIRequest* request,
+                                                const AIOfflineModeConfig* offline_config,
+                                                const AIRetryConfig* retry_config) {
+    AIOfflineModeConfig config = offline_config ? *offline_config : ai_offline_config_default();
+
+    /* First, try normal completion with fallback */
+    AIResponse* response = ai_registry_complete_with_fallback(registry, request,
+                                                               NULL, retry_config);
+
+    /* If successful, return immediately */
+    if (response && response->success) {
+        return response;
+    }
+
+    /* If offline mode is not enabled, return the error response */
+    if (!config.enabled) {
+        if (!response) {
+            response = calloc(1, sizeof(AIResponse));
+            if (response) {
+                response->success = false;
+                response->error = strdup("All AI providers failed");
+            }
+        }
+        return response;
+    }
+
+    /* Free the failed response */
+    if (response) {
+        ai_response_free(response);
+    }
+
+    /* Check network status */
+    AINetworkStatus status = ai_registry_check_network_status(registry);
+
+    log_info("AI providers unavailable. Status: %s", ai_network_status_message(status));
+
+    /* Generate offline fallback response */
+    if (config.provide_generic_help) {
+        response = ai_generate_offline_response(request, status);
+        if (response) {
+            log_info("Providing offline mode response");
+            return response;
+        }
+    }
+
+    /* Return generic error if nothing else worked */
+    response = calloc(1, sizeof(AIResponse));
+    if (response) {
+        response->success = false;
+        response->error = strdup("All AI providers failed and offline mode could not generate a response");
+        response->content = strdup(ai_network_status_message(status));
+    }
+
+    return response;
+}
+
+/* ========================================================================
+ * GPU Acceleration Support
+ * ======================================================================== */
+
+AIGPUBackend ai_get_gpu_backend(void) {
+#if defined(CYXMAKE_GPU_CUDA)
+    return AI_GPU_CUDA;
+#elif defined(CYXMAKE_GPU_VULKAN)
+    return AI_GPU_VULKAN;
+#elif defined(CYXMAKE_GPU_METAL)
+    return AI_GPU_METAL;
+#elif defined(CYXMAKE_GPU_OPENCL)
+    return AI_GPU_OPENCL;
+#else
+    return AI_GPU_NONE;
+#endif
+}
+
+const char* ai_gpu_backend_name(AIGPUBackend backend) {
+    switch (backend) {
+        case AI_GPU_CUDA:   return "CUDA (NVIDIA)";
+        case AI_GPU_VULKAN: return "Vulkan";
+        case AI_GPU_METAL:  return "Metal (Apple)";
+        case AI_GPU_OPENCL: return "OpenCL";
+        case AI_GPU_NONE:
+        default:            return "None (CPU only)";
+    }
+}
+
+bool ai_has_gpu_support(void) {
+    return ai_get_gpu_backend() != AI_GPU_NONE;
+}
+
+AIGPUInfo* ai_get_gpu_info(void) {
+    AIGPUInfo* info = calloc(1, sizeof(AIGPUInfo));
+    if (!info) return NULL;
+
+    info->backend = ai_get_gpu_backend();
+    info->available = (info->backend != AI_GPU_NONE);
+
+    if (info->available) {
+        /* Set default values - actual GPU detection would require
+           backend-specific code (CUDA API, Vulkan API, etc.) */
+        info->device_name = strdup(ai_gpu_backend_name(info->backend));
+
+        /* Estimate recommended layers based on typical GPU memory */
+        /* This is a heuristic - actual implementation would query GPU */
+        switch (info->backend) {
+            case AI_GPU_CUDA:
+                info->memory_mb = 8192;  /* Assume 8GB NVIDIA GPU */
+                info->recommended_layers = 35;
+                break;
+            case AI_GPU_VULKAN:
+                info->memory_mb = 4096;  /* Assume 4GB GPU */
+                info->recommended_layers = 20;
+                break;
+            case AI_GPU_METAL:
+                info->memory_mb = 8192;  /* Assume 8GB Apple GPU */
+                info->recommended_layers = 35;
+                break;
+            case AI_GPU_OPENCL:
+                info->memory_mb = 2048;  /* Conservative estimate */
+                info->recommended_layers = 10;
+                break;
+            default:
+                info->memory_mb = 0;
+                info->recommended_layers = 0;
+                break;
+        }
+    } else {
+        info->device_name = strdup("CPU");
+        info->memory_mb = 0;
+        info->recommended_layers = 0;
+    }
+
+    return info;
+}
+
+void ai_gpu_info_free(AIGPUInfo* info) {
+    if (!info) return;
+    free(info->device_name);
+    free(info);
+}
+
+int ai_recommend_gpu_layers(int model_size_mb) {
+    if (!ai_has_gpu_support()) {
+        return 0;  /* CPU only */
+    }
+
+    AIGPUInfo* info = ai_get_gpu_info();
+    if (!info) return 0;
+
+    int recommended = 0;
+
+    if (info->memory_mb > 0 && model_size_mb > 0) {
+        /* Heuristic: GPU memory should be ~1.2x model size for full offload */
+        /* Each layer is roughly 1/40th of a typical LLM */
+        float memory_ratio = (float)info->memory_mb / (float)model_size_mb;
+
+        if (memory_ratio >= 1.5f) {
+            /* Plenty of GPU memory - offload all layers */
+            recommended = 99;  /* All layers */
+        } else if (memory_ratio >= 1.0f) {
+            /* Just enough - offload most layers */
+            recommended = 35;
+        } else if (memory_ratio >= 0.5f) {
+            /* Half memory - partial offload */
+            recommended = (int)(memory_ratio * 40);
+        } else {
+            /* Very limited GPU memory - minimal offload */
+            recommended = (int)(memory_ratio * 20);
+        }
+
+        /* Clamp to reasonable range */
+        if (recommended < 0) recommended = 0;
+        if (recommended > 99) recommended = 99;
+    } else {
+        recommended = info->recommended_layers;
+    }
+
+    ai_gpu_info_free(info);
+    return recommended;
+}
+
+void ai_print_gpu_status(void) {
+    log_info("=== GPU Acceleration Status ===");
+
+    AIGPUBackend backend = ai_get_gpu_backend();
+    log_info("Backend: %s", ai_gpu_backend_name(backend));
+
+    if (backend == AI_GPU_NONE) {
+        log_info("GPU acceleration is NOT enabled.");
+        log_info("");
+        log_info("To enable GPU acceleration, rebuild CyxMake with one of:");
+        log_info("  cmake -DCYXMAKE_GPU_CUDA=ON ..    # For NVIDIA GPUs");
+        log_info("  cmake -DCYXMAKE_GPU_VULKAN=ON ..  # Cross-platform");
+        log_info("  cmake -DCYXMAKE_GPU_METAL=ON ..   # For Apple GPUs");
+        log_info("  cmake -DCYXMAKE_GPU_OPENCL=ON ..  # OpenCL");
+        log_info("");
+        log_info("Auto-detection is enabled by default if GPU SDK is found.");
+    } else {
+        AIGPUInfo* info = ai_get_gpu_info();
+        if (info) {
+            log_success("GPU acceleration is ENABLED");
+            log_info("  Device: %s", info->device_name ? info->device_name : "Unknown");
+            log_info("  Estimated memory: %d MB", info->memory_mb);
+            log_info("  Recommended layers: %d", info->recommended_layers);
+            ai_gpu_info_free(info);
+        }
+    }
+
+    log_info("");
 }
