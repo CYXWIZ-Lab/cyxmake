@@ -174,12 +174,23 @@ Spawn named agents to handle complex tasks in parallel:
 cyxmake> /agent spawn builder build
 ✓ Created agent 'builder' (type: build, state: idle)
 
-cyxmake> /agent spawn analyzer smart
-✓ Created agent 'analyzer' (type: smart, state: idle)
+cyxmake> /agent spawn analyzer smart --mock
+✓ Created agent 'analyzer' (type: smart, state: idle) [MOCK MODE]
+
+cyxmake> /agent set analyzer temperature 0.8
+✓ Agent 'analyzer' setting 'temperature' changed: 0.70 -> 0.8
+
+cyxmake> /agent get analyzer
+Agent Settings: analyzer
+  timeout        300 seconds
+  temperature    0.80
+  max_tokens     2048
+  verbose        false
+  mock           true
 
 cyxmake> /agent assign builder "Build with Release config"
 ✓ Task assigned to 'builder': Build with Release config
-Agent will execute task asynchronously...
+Agent executing task asynchronously...
 
 cyxmake> /agent list
 Active Agents
@@ -188,13 +199,26 @@ Active Agents
 
 cyxmake> /agent wait builder
 Waiting for agent 'builder' to complete...
-✓ Agent 'builder' completed
+✓ Agent 'builder' finished (state: idle)
 ```
 
 **Agent Types:**
 - **smart** - Intelligent reasoning agent with chain-of-thought
 - **build** - Specialized build agent with error recovery
 - **auto** - Autonomous tool-using agent
+
+**Agent Commands:**
+| Command | Description |
+|---------|-------------|
+| `/agent spawn <name> <type>` | Create new agent |
+| `/agent spawn <name> <type> --mock` | Create in mock mode (no AI needed) |
+| `/agent list` | List all agents |
+| `/agent assign <name> <task>` | Assign task to agent |
+| `/agent status <name>` | Show agent status |
+| `/agent get <name> [key]` | Show agent settings |
+| `/agent set <name> <key> <val>` | Configure agent |
+| `/agent wait <name>` | Wait for agent to complete |
+| `/agent terminate <name>` | Stop an agent |
 
 ### Autonomous Error Recovery
 
@@ -429,8 +453,11 @@ cyxmake> @ai fix the errors     # Ask AI for help
 | `/agent` | `/a` | Multi-agent system management |
 | `/agent list` | - | List all active agents |
 | `/agent spawn <name> <type>` | - | Create new agent (smart/build/auto) |
+| `/agent spawn ... --mock` | - | Create agent in mock mode |
 | `/agent assign <name> <task>` | - | Assign task to agent |
 | `/agent status <name>` | - | Show agent status |
+| `/agent get <name> [key]` | - | Show agent settings |
+| `/agent set <name> <key> <val>` | - | Configure agent settings |
 | `/agent terminate <name>` | - | Stop an agent |
 | `/agent wait <name>` | - | Wait for agent completion |
 | `/exit` | `/q` | Exit CyxMake |

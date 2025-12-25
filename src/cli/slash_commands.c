@@ -2083,6 +2083,7 @@ bool cmd_agent(ReplSession* session, const char* args) {
             printf("  %s/agent spawn <name> <type> --mock%s - Create agent in mock mode\n", COLOR_CYAN, COLOR_RESET);
             printf("  %s/agent assign <name> <task>%s     - Assign task to agent\n", COLOR_CYAN, COLOR_RESET);
             printf("  %s/agent status <name>%s            - Show agent status\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent get <name> [key]%s         - Show agent settings\n", COLOR_CYAN, COLOR_RESET);
             printf("  %s/agent set <name> <key> <val>%s   - Configure agent settings\n", COLOR_CYAN, COLOR_RESET);
             printf("  %s/agent terminate <name>%s         - Stop an agent\n", COLOR_CYAN, COLOR_RESET);
             printf("  %s/agent wait <name>%s              - Wait for agent to complete\n", COLOR_CYAN, COLOR_RESET);
@@ -2110,6 +2111,7 @@ bool cmd_agent(ReplSession* session, const char* args) {
             printf("  /agent spawn <name> <type> --mock - Create agent in mock mode\n");
             printf("  /agent assign <name> <task>      - Assign task to agent\n");
             printf("  /agent status <name>             - Show agent status\n");
+            printf("  /agent get <name> [key]          - Show agent settings\n");
             printf("  /agent set <name> <key> <val>    - Configure agent settings\n");
             printf("  /agent terminate <name>          - Stop an agent\n");
             printf("  /agent wait <name>               - Wait for agent to complete\n");
@@ -2877,6 +2879,146 @@ bool cmd_agent(ReplSession* session, const char* args) {
             } else {
                 printf("%s Agent '%s' setting '%s' changed: %s -> %s\n",
                        SYM_CHECK, name, key, old_value, value);
+            }
+        }
+
+        return true;
+    }
+    else if (strncmp(args, "get", 3) == 0 && (args[3] == ' ' || args[3] == '\0')) {
+        /* /agent get <name> [key] - Show agent settings */
+        const char* params = args[3] == ' ' ? args + 4 : "";
+        while (*params == ' ') params++;
+
+        char name[64] = {0};
+        char key[32] = {0};
+
+        int parsed = sscanf(params, "%63s %31s", name, key);
+        if (parsed < 1 || name[0] == '\0') {
+            if (colors) {
+                printf("%s%s Usage: /agent get <name> [key]%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+                printf("%sOmit [key] to show all settings%s\n", COLOR_DIM, COLOR_RESET);
+            } else {
+                printf("%s Usage: /agent get <name> [key]\n", SYM_CROSS);
+                printf("Omit [key] to show all settings\n");
+            }
+            return true;
+        }
+
+        /* Check registry */
+        if (!registry) {
+            if (colors) {
+                printf("%s%s Agent system not initialized%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Agent system not initialized\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        /* Find the agent */
+        AgentInstance* agent = agent_registry_get(registry, name);
+        if (!agent) {
+            if (colors) {
+                printf("%s%s Agent '%s%s%s' not found%s\n",
+                       COLOR_RED, SYM_CROSS,
+                       COLOR_CYAN, name, COLOR_RED, COLOR_RESET);
+            } else {
+                printf("%s Agent '%s' not found\n", SYM_CROSS, name);
+            }
+            return true;
+        }
+
+        /* Show specific key or all settings */
+        if (key[0] != '\0') {
+            /* Show specific setting */
+            char value[128] = {0};
+            bool found = true;
+
+            if (strcmp(key, "timeout") == 0) {
+                snprintf(value, sizeof(value), "%d", agent->config.timeout_sec);
+            } else if (strcmp(key, "temperature") == 0) {
+                snprintf(value, sizeof(value), "%.2f", agent->config.temperature);
+            } else if (strcmp(key, "max_tokens") == 0) {
+                snprintf(value, sizeof(value), "%d", agent->config.max_tokens);
+            } else if (strcmp(key, "max_retries") == 0) {
+                snprintf(value, sizeof(value), "%d", agent->config.max_retries);
+            } else if (strcmp(key, "max_iterations") == 0) {
+                snprintf(value, sizeof(value), "%d", agent->config.max_iterations);
+            } else if (strcmp(key, "verbose") == 0) {
+                snprintf(value, sizeof(value), "%s", agent->config.verbose ? "true" : "false");
+            } else if (strcmp(key, "mock") == 0 || strcmp(key, "mock_mode") == 0) {
+                snprintf(value, sizeof(value), "%s", agent->config.mock_mode ? "true" : "false");
+            } else if (strcmp(key, "read_only") == 0) {
+                snprintf(value, sizeof(value), "%s", agent->config.read_only ? "true" : "false");
+            } else if (strcmp(key, "auto_start") == 0) {
+                snprintf(value, sizeof(value), "%s", agent->config.auto_start ? "true" : "false");
+            } else {
+                found = false;
+            }
+
+            if (found) {
+                if (colors) {
+                    printf("%s%s%s.%s%s%s = %s%s%s\n",
+                           COLOR_CYAN, name, COLOR_RESET,
+                           COLOR_YELLOW, key, COLOR_RESET,
+                           COLOR_GREEN, value, COLOR_RESET);
+                } else {
+                    printf("%s.%s = %s\n", name, key, value);
+                }
+            } else {
+                if (colors) {
+                    printf("%s%s Unknown setting: %s%s%s\n",
+                           COLOR_RED, SYM_CROSS, COLOR_CYAN, key, COLOR_RESET);
+                } else {
+                    printf("%s Unknown setting: %s\n", SYM_CROSS, key);
+                }
+            }
+        } else {
+            /* Show all settings */
+            if (colors) {
+                printf("\n%s%sAgent Settings: %s%s%s\n\n",
+                       COLOR_BOLD, COLOR_CYAN, COLOR_GREEN, name, COLOR_RESET);
+
+                printf("  %s%-14s%s %s%d%s seconds\n",
+                       COLOR_YELLOW, "timeout", COLOR_RESET,
+                       COLOR_GREEN, agent->config.timeout_sec, COLOR_RESET);
+                printf("  %s%-14s%s %s%.2f%s\n",
+                       COLOR_YELLOW, "temperature", COLOR_RESET,
+                       COLOR_GREEN, agent->config.temperature, COLOR_RESET);
+                printf("  %s%-14s%s %s%d%s\n",
+                       COLOR_YELLOW, "max_tokens", COLOR_RESET,
+                       COLOR_GREEN, agent->config.max_tokens, COLOR_RESET);
+                printf("  %s%-14s%s %s%d%s\n",
+                       COLOR_YELLOW, "max_retries", COLOR_RESET,
+                       COLOR_GREEN, agent->config.max_retries, COLOR_RESET);
+                printf("  %s%-14s%s %s%d%s\n",
+                       COLOR_YELLOW, "max_iterations", COLOR_RESET,
+                       COLOR_GREEN, agent->config.max_iterations, COLOR_RESET);
+                printf("  %s%-14s%s %s%s%s\n",
+                       COLOR_YELLOW, "verbose", COLOR_RESET,
+                       agent->config.verbose ? COLOR_GREEN : COLOR_DIM,
+                       agent->config.verbose ? "true" : "false", COLOR_RESET);
+                printf("  %s%-14s%s %s%s%s\n",
+                       COLOR_YELLOW, "mock", COLOR_RESET,
+                       agent->config.mock_mode ? COLOR_GREEN : COLOR_DIM,
+                       agent->config.mock_mode ? "true" : "false", COLOR_RESET);
+                printf("  %s%-14s%s %s%s%s\n",
+                       COLOR_YELLOW, "read_only", COLOR_RESET,
+                       agent->config.read_only ? COLOR_GREEN : COLOR_DIM,
+                       agent->config.read_only ? "true" : "false", COLOR_RESET);
+                printf("\n");
+            } else {
+                printf("\nAgent Settings: %s\n\n", name);
+                printf("  %-14s %d seconds\n", "timeout", agent->config.timeout_sec);
+                printf("  %-14s %.2f\n", "temperature", agent->config.temperature);
+                printf("  %-14s %d\n", "max_tokens", agent->config.max_tokens);
+                printf("  %-14s %d\n", "max_retries", agent->config.max_retries);
+                printf("  %-14s %d\n", "max_iterations", agent->config.max_iterations);
+                printf("  %-14s %s\n", "verbose", agent->config.verbose ? "true" : "false");
+                printf("  %-14s %s\n", "mock", agent->config.mock_mode ? "true" : "false");
+                printf("  %-14s %s\n", "read_only", agent->config.read_only ? "true" : "false");
+                printf("\n");
             }
         }
 
