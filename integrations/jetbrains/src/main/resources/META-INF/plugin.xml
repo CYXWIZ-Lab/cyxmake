@@ -1,0 +1,144 @@
+<idea-plugin>
+    <id>com.cyxwiz.cyxmake</id>
+    <name>CyxMake</name>
+    <vendor email="support@cyxwiz.dev" url="https://github.com/CYXWIZ-Lab/cyxmake">CYXWIZ-Lab</vendor>
+
+    <description><![CDATA[
+        <h1>CyxMake - AI-Powered Build Automation</h1>
+        <p>Build smarter, not harder. CyxMake uses AI to automate your build process.</p>
+
+        <h2>Features</h2>
+        <ul>
+            <li><b>Natural Language Builds</b> - Use plain English to control builds</li>
+            <li><b>AI Error Recovery</b> - Automatically diagnose and fix build errors</li>
+            <li><b>Multi-Project Support</b> - C/C++, Rust, Python, Node.js</li>
+            <li><b>Tool Window</b> - Integrated build output and status</li>
+        </ul>
+
+        <h2>Supported IDEs</h2>
+        <ul>
+            <li>IntelliJ IDEA</li>
+            <li>CLion</li>
+            <li>PyCharm</li>
+            <li>WebStorm</li>
+            <li>Other JetBrains IDEs</li>
+        </ul>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Tool Window -->
+        <toolWindow id="CyxMake"
+                    anchor="bottom"
+                    icon="/icons/cyxmake.svg"
+                    factoryClass="com.cyxwiz.cyxmake.ui.CyxMakeToolWindowFactory"/>
+
+        <!-- Settings -->
+        <applicationConfigurable
+                parentId="tools"
+                instance="com.cyxwiz.cyxmake.settings.CyxMakeConfigurable"
+                id="com.cyxwiz.cyxmake.settings"
+                displayName="CyxMake"/>
+
+        <applicationService
+                serviceImplementation="com.cyxwiz.cyxmake.settings.CyxMakeSettings"/>
+
+        <!-- Project Service -->
+        <projectService
+                serviceImplementation="com.cyxwiz.cyxmake.services.CyxMakeProjectService"/>
+
+        <!-- Run Configuration -->
+        <configurationType
+                implementation="com.cyxwiz.cyxmake.run.CyxMakeConfigurationType"/>
+
+        <!-- Annotator for error highlighting -->
+        <externalAnnotator
+                language=""
+                implementationClass="com.cyxwiz.cyxmake.annotators.CyxMakeAnnotator"/>
+
+        <!-- Startup Activity -->
+        <postStartupActivity
+                implementation="com.cyxwiz.cyxmake.CyxMakeStartupActivity"/>
+
+        <!-- Notification Group -->
+        <notificationGroup id="CyxMake Notifications"
+                          displayType="BALLOON"
+                          isLogByDefault="true"/>
+    </extensions>
+
+    <actions>
+        <!-- Main Menu Actions -->
+        <group id="CyxMake.MainMenu" text="CyxMake" popup="true">
+            <add-to-group group-id="BuildMenu" anchor="after" relative-to-action="BuildMenu"/>
+
+            <action id="CyxMake.Build"
+                    class="com.cyxwiz.cyxmake.actions.BuildAction"
+                    text="Build Project"
+                    description="Build project with CyxMake"
+                    icon="AllIcons.Actions.Compile">
+                <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift F9"/>
+            </action>
+
+            <action id="CyxMake.BuildRelease"
+                    class="com.cyxwiz.cyxmake.actions.BuildReleaseAction"
+                    text="Build Release"
+                    description="Build release configuration"/>
+
+            <action id="CyxMake.BuildDebug"
+                    class="com.cyxwiz.cyxmake.actions.BuildDebugAction"
+                    text="Build Debug"
+                    description="Build debug configuration"/>
+
+            <separator/>
+
+            <action id="CyxMake.Clean"
+                    class="com.cyxwiz.cyxmake.actions.CleanAction"
+                    text="Clean Build"
+                    description="Clean build artifacts"
+                    icon="AllIcons.Actions.GC"/>
+
+            <action id="CyxMake.Analyze"
+                    class="com.cyxwiz.cyxmake.actions.AnalyzeAction"
+                    text="Analyze Project"
+                    description="Analyze project structure"
+                    icon="AllIcons.Actions.Find"/>
+
+            <separator/>
+
+            <action id="CyxMake.FixErrors"
+                    class="com.cyxwiz.cyxmake.actions.FixErrorsAction"
+                    text="Fix Build Errors"
+                    description="Use AI to fix build errors"
+                    icon="AllIcons.Actions.QuickfixBulb">
+                <keyboard-shortcut keymap="$default" first-keystroke="ctrl shift alt F"/>
+            </action>
+
+            <action id="CyxMake.OpenRepl"
+                    class="com.cyxwiz.cyxmake.actions.OpenReplAction"
+                    text="Open REPL"
+                    description="Open CyxMake interactive terminal"
+                    icon="AllIcons.Debugger.Console"/>
+        </group>
+
+        <!-- Editor Context Menu -->
+        <group id="CyxMake.EditorContextMenu">
+            <add-to-group group-id="EditorPopupMenu" anchor="after" relative-to-action="EditorPopupMenu1"/>
+            <reference ref="CyxMake.Build"/>
+            <reference ref="CyxMake.FixErrors"/>
+        </group>
+
+        <!-- Project View Context Menu -->
+        <group id="CyxMake.ProjectViewContextMenu">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="after" relative-to-action="WeighingNewGroup"/>
+            <reference ref="CyxMake.Build"/>
+            <reference ref="CyxMake.Analyze"/>
+        </group>
+
+        <!-- Toolbar -->
+        <group id="CyxMake.Toolbar">
+            <reference ref="CyxMake.Build"/>
+            <reference ref="CyxMake.FixErrors"/>
+        </group>
+    </actions>
+</idea-plugin>

@@ -1,0 +1,252 @@
+{
+  "name": "cyxmake",
+  "displayName": "CyxMake",
+  "description": "AI-powered build automation for VS Code",
+  "version": "0.2.0",
+  "publisher": "cyxwiz-lab",
+  "icon": "images/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "build",
+    "cmake",
+    "ai",
+    "automation",
+    "c",
+    "cpp",
+    "rust"
+  ],
+  "activationEvents": [
+    "workspaceContains:CMakeLists.txt",
+    "workspaceContains:Makefile",
+    "workspaceContains:Cargo.toml",
+    "workspaceContains:package.json",
+    "workspaceContains:cyxmake.toml"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cyxmake.build",
+        "title": "CyxMake: Build Project",
+        "icon": "$(play)"
+      },
+      {
+        "command": "cyxmake.buildRelease",
+        "title": "CyxMake: Build Release"
+      },
+      {
+        "command": "cyxmake.buildDebug",
+        "title": "CyxMake: Build Debug"
+      },
+      {
+        "command": "cyxmake.clean",
+        "title": "CyxMake: Clean Build"
+      },
+      {
+        "command": "cyxmake.analyze",
+        "title": "CyxMake: Analyze Project"
+      },
+      {
+        "command": "cyxmake.fixErrors",
+        "title": "CyxMake: Fix Build Errors"
+      },
+      {
+        "command": "cyxmake.openRepl",
+        "title": "CyxMake: Open REPL"
+      },
+      {
+        "command": "cyxmake.configure",
+        "title": "CyxMake: Configure"
+      },
+      {
+        "command": "cyxmake.showStatus",
+        "title": "CyxMake: Show Status"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "cyxmake.build",
+          "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "cyxmake.fixErrors",
+          "when": "cyxmake.hasErrors"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "cyxmake.build",
+          "group": "cyxmake",
+          "when": "resourceExtname == .c || resourceExtname == .cpp || resourceExtname == .h"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "cyxmake.build",
+          "group": "cyxmake",
+          "when": "resourceFilename == CMakeLists.txt || resourceFilename == Makefile"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "cyxmake.build",
+        "key": "ctrl+shift+b",
+        "mac": "cmd+shift+b",
+        "when": "cyxmake.enabled"
+      },
+      {
+        "command": "cyxmake.fixErrors",
+        "key": "ctrl+shift+f",
+        "mac": "cmd+shift+f",
+        "when": "cyxmake.hasErrors"
+      }
+    ],
+    "configuration": {
+      "title": "CyxMake",
+      "properties": {
+        "cyxmake.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable CyxMake extension"
+        },
+        "cyxmake.executablePath": {
+          "type": "string",
+          "default": "cyxmake",
+          "description": "Path to CyxMake executable"
+        },
+        "cyxmake.defaultBuildType": {
+          "type": "string",
+          "enum": ["Debug", "Release", "RelWithDebInfo", "MinSizeRel"],
+          "default": "Debug",
+          "description": "Default build type"
+        },
+        "cyxmake.parallelJobs": {
+          "type": "number",
+          "default": 0,
+          "description": "Number of parallel build jobs (0 = auto)"
+        },
+        "cyxmake.autoAnalyze": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically analyze project on open"
+        },
+        "cyxmake.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show CyxMake status in status bar"
+        },
+        "cyxmake.ai.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable AI features"
+        },
+        "cyxmake.ai.provider": {
+          "type": "string",
+          "enum": ["none", "ollama", "openai", "anthropic"],
+          "default": "none",
+          "description": "AI provider for error analysis"
+        },
+        "cyxmake.ai.autoFix": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically apply AI-suggested fixes"
+        },
+        "cyxmake.diagnostics.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show build errors as diagnostics"
+        },
+        "cyxmake.diagnostics.showWarnings": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show build warnings"
+        }
+      }
+    },
+    "taskDefinitions": [
+      {
+        "type": "cyxmake",
+        "required": ["command"],
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "CyxMake command to run"
+          },
+          "buildType": {
+            "type": "string",
+            "description": "Build type (Debug, Release)"
+          }
+        }
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "cyxmake",
+        "owner": "cyxmake",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^(.+):(\\d+):(\\d+):\\s+(warning|error):\\s+(.+)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "message": 5
+        }
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "cyxmakeStatus",
+          "name": "CyxMake",
+          "when": "cyxmake.enabled"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cyxmake",
+          "title": "CyxMake",
+          "icon": "images/icon.svg"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "eslint": "^8.54.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  },
+  "dependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CYXWIZ-Lab/cyxmake.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CYXWIZ-Lab/cyxmake/issues"
+  },
+  "homepage": "https://github.com/CYXWIZ-Lab/cyxmake",
+  "license": "Apache-2.0"
+}

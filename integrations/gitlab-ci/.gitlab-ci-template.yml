@@ -1,0 +1,146 @@
+# CyxMake GitLab CI Template
+# Include this in your .gitlab-ci.yml with:
+#   include:
+#     - remote: 'https://raw.githubusercontent.com/CYXWIZ-Lab/cyxmake/main/integrations/gitlab-ci/.gitlab-ci-template.yml'
+
+# Define reusable scripts
+.cyxmake-setup: &cyxmake-setup
+  - |
+    echo "Setting up CyxMake..."
+
+    # Install dependencies
+    if command -v apt-get &> /dev/null; then
+      apt-get update && apt-get install -y cmake build-essential git curl
+    elif command -v yum &> /dev/null; then
+      yum install -y cmake gcc gcc-c++ git curl
+    elif command -v apk &> /dev/null; then
+      apk add --no-cache cmake build-base git curl
+    fi
+
+    # Clone and build CyxMake
+    git clone --depth 1 https://github.com/CYXWIZ-Lab/cyxmake.git /tmp/cyxmake
+    cd /tmp/cyxmake
+    mkdir build && cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCYXMAKE_BUILD_TESTS=OFF
+    cmake --build . --config Release --parallel
+    cp bin/cyxmake /usr/local/bin/ || cp Release/cyxmake /usr/local/bin/ || true
+    cd $CI_PROJECT_DIR
+
+.cyxmake-config: &cyxmake-config
+  - |
+    cat > cyxmake.toml << 'EOF'
+    [ai]
+    default_provider = "${CYXMAKE_AI_PROVIDER:-none}"
+    timeout = 300
+
+    [ai.providers.openai]
+    enabled = true
+    type = "openai"
+    api_key = "${OPENAI_API_KEY}"
+    model = "gpt-4o-mini"
+
+    [build]
+    type = "${CYXMAKE_BUILD_TYPE:-Release}"
+    build_dir = "build"
+    parallel_jobs = 0
+
+    [permissions]
+    auto_approve_read = true
+    auto_approve_build = true
+    auto_approve_list = true
+    always_confirm_delete = false
+    always_confirm_install = false
+    always_confirm_command = false
+    remember_choices = true
+
+    [logging]
+    level = "info"
+    colors = false
+    EOF
+
+# CyxMake build job template
+.cyxmake-build:
+  variables:
+    CYXMAKE_BUILD_TYPE: "Release"
+    CYXMAKE_AI_PROVIDER: "none"
+    CYXMAKE_COMMAND: "build"
+  before_script:
+    - *cyxmake-setup
+    - *cyxmake-config
+  script:
+    - |
+      echo "Running CyxMake: $CYXMAKE_COMMAND"
+      cyxmake $CYXMAKE_COMMAND
+  cache:
+    key: "cyxmake-${CI_COMMIT_REF_SLUG}"
+    paths:
+      - .cyxmake/
+      - build/
+  artifacts:
+    when: always
+    paths:
+      - .cyxmake/cyxmake.log
+      - .cyxmake/audit.log
+    expire_in: 1 week
+
+# CyxMake analyze job template
+.cyxmake-analyze:
+  extends: .cyxmake-build
+  variables:
+    CYXMAKE_COMMAND: "init"
+
+# CyxMake clean job template
+.cyxmake-clean:
+  extends: .cyxmake-build
+  variables:
+    CYXMAKE_COMMAND: "clean"
+  cache: {}
+
+# Example stages
+stages:
+  - analyze
+  - build
+  - test
+
+# Example jobs using templates
+cyxmake:analyze:
+  extends: .cyxmake-analyze
+  stage: analyze
+  only:
+    - merge_requests
+    - main
+
+cyxmake:build:debug:
+  extends: .cyxmake-build
+  stage: build
+  variables:
+    CYXMAKE_BUILD_TYPE: "Debug"
+
+cyxmake:build:release:
+  extends: .cyxmake-build
+  stage: build
+  variables:
+    CYXMAKE_BUILD_TYPE: "Release"
+
+# Multi-platform builds
+.cyxmake-linux:
+  extends: .cyxmake-build
+  image: ubuntu:22.04
+  tags:
+    - linux
+
+.cyxmake-windows:
+  extends: .cyxmake-build
+  tags:
+    - windows
+  before_script:
+    - |
+      # Windows-specific setup
+      git clone --depth 1 https://github.com/CYXWIZ-Lab/cyxmake.git C:\cyxmake
+      cd C:\cyxmake
+      mkdir build && cd build
+      cmake .. -DCMAKE_BUILD_TYPE=Release -DCYXMAKE_BUILD_TESTS=OFF
+      cmake --build . --config Release
+      $env:PATH = "C:\cyxmake\build\Release;$env:PATH"
+      cd $CI_PROJECT_DIR
+    - *cyxmake-config
