@@ -2290,6 +2290,9 @@ bool cmd_agent(ReplSession* session, const char* args) {
             printf("  %s/agent set <name> <key> <val>%s   - Configure agent settings\n", COLOR_CYAN, COLOR_RESET);
             printf("  %s/agent terminate <name>%s         - Stop an agent\n", COLOR_CYAN, COLOR_RESET);
             printf("  %s/agent wait <name>%s              - Wait for agent to complete\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent send <from> <to> <msg>%s   - Send message between agents\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent inbox <name>%s             - Check agent's messages\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent broadcast <from> <msg>%s   - Broadcast to all agents\n", COLOR_CYAN, COLOR_RESET);
 
             printf("\n%sAgent Types:%s\n", COLOR_BOLD, COLOR_RESET);
             printf("  %ssmart%s  - Intelligent reasoning agent (SmartAgent)\n", COLOR_GREEN, COLOR_RESET);
@@ -2318,6 +2321,9 @@ bool cmd_agent(ReplSession* session, const char* args) {
             printf("  /agent set <name> <key> <val>    - Configure agent settings\n");
             printf("  /agent terminate <name>          - Stop an agent\n");
             printf("  /agent wait <name>               - Wait for agent to complete\n");
+            printf("  /agent send <from> <to> <msg>    - Send message between agents\n");
+            printf("  /agent inbox <name>              - Check agent's messages\n");
+            printf("  /agent broadcast <from> <msg>    - Broadcast to all agents\n");
 
             printf("\nAgent Types:\n");
             printf("  smart  - Intelligent reasoning agent\n");
@@ -3223,6 +3229,283 @@ bool cmd_agent(ReplSession* session, const char* args) {
                 printf("  %-14s %s\n", "read_only", agent->config.read_only ? "true" : "false");
                 printf("\n");
             }
+        }
+
+        return true;
+    }
+    else if (strncmp(args, "send ", 5) == 0) {
+        /* /agent send <from> <to> <message> - Send message between agents */
+        const char* params = args + 5;
+        while (*params == ' ') params++;
+
+        char from_name[64] = {0};
+        char to_name[64] = {0};
+        char message[512] = {0};
+
+        /* Parse: from to "message" or from to message */
+        int n = 0;
+        if (sscanf(params, "%63s %63s %n", from_name, to_name, &n) >= 2) {
+            const char* msg_start = params + n;
+            /* Skip quotes if present */
+            if (*msg_start == '"') {
+                msg_start++;
+                const char* end = strchr(msg_start, '"');
+                if (end) {
+                    size_t len = end - msg_start;
+                    if (len >= sizeof(message)) len = sizeof(message) - 1;
+                    strncpy(message, msg_start, len);
+                } else {
+                    strncpy(message, msg_start, sizeof(message) - 1);
+                }
+            } else {
+                strncpy(message, msg_start, sizeof(message) - 1);
+            }
+        }
+
+        if (!from_name[0] || !to_name[0] || !message[0]) {
+            if (colors) {
+                printf("%s%s Usage: /agent send <from> <to> <message>%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+                printf("%sExample: /agent send builder tester \"Build complete\"%s\n",
+                       COLOR_DIM, COLOR_RESET);
+            } else {
+                printf("%s Usage: /agent send <from> <to> <message>\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        if (!registry || !registry->message_bus) {
+            if (colors) {
+                printf("%s%s Message bus not initialized%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Message bus not initialized\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        /* Find sender agent */
+        AgentInstance* from_agent = agent_registry_get(registry, from_name);
+        if (!from_agent) {
+            if (colors) {
+                printf("%s%s Sender agent '%s%s%s' not found%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_CYAN, from_name, COLOR_RED, COLOR_RESET);
+            } else {
+                printf("%s Sender agent '%s' not found\n", SYM_CROSS, from_name);
+            }
+            return true;
+        }
+
+        /* Find receiver agent */
+        AgentInstance* to_agent = agent_registry_get(registry, to_name);
+        if (!to_agent) {
+            if (colors) {
+                printf("%s%s Receiver agent '%s%s%s' not found%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_CYAN, to_name, COLOR_RED, COLOR_RESET);
+            } else {
+                printf("%s Receiver agent '%s' not found\n", SYM_CROSS, to_name);
+            }
+            return true;
+        }
+
+        /* Create and send message */
+        AgentMessage* msg = message_create(MSG_TYPE_CUSTOM, from_agent->id,
+                                           to_agent->id, message);
+        if (msg) {
+            msg->sender_name = strdup(from_name);
+            if (message_bus_send(registry->message_bus, msg)) {
+                if (colors) {
+                    printf("%s%s Message sent: %s%s%s -> %s%s%s%s\n",
+                           COLOR_GREEN, SYM_CHECK,
+                           COLOR_CYAN, from_name, COLOR_RESET,
+                           COLOR_CYAN, to_name, COLOR_RESET, COLOR_RESET);
+                    printf("  %s\"%s\"%s\n", COLOR_DIM, message, COLOR_RESET);
+                } else {
+                    printf("%s Message sent: %s -> %s\n", SYM_CHECK, from_name, to_name);
+                    printf("  \"%s\"\n", message);
+                }
+            } else {
+                if (colors) {
+                    printf("%s%s Failed to send message%s\n",
+                           COLOR_RED, SYM_CROSS, COLOR_RESET);
+                } else {
+                    printf("%s Failed to send message\n", SYM_CROSS);
+                }
+                message_free(msg);
+            }
+        } else {
+            if (colors) {
+                printf("%s%s Failed to create message%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Failed to create message\n", SYM_CROSS);
+            }
+        }
+
+        return true;
+    }
+    else if (strncmp(args, "inbox ", 6) == 0 || strncmp(args, "messages ", 9) == 0) {
+        /* /agent inbox <name> - Check agent's message inbox */
+        const char* name = args + (strncmp(args, "inbox ", 6) == 0 ? 6 : 9);
+        while (*name == ' ') name++;
+
+        if (!*name) {
+            if (colors) {
+                printf("%s%s Usage: /agent inbox <name>%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Usage: /agent inbox <name>\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        if (!registry || !registry->message_bus) {
+            if (colors) {
+                printf("%s%s Message bus not initialized%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Message bus not initialized\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        AgentInstance* agent = agent_registry_get(registry, name);
+        if (!agent) {
+            if (colors) {
+                printf("%s%s Agent '%s%s%s' not found%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_CYAN, name, COLOR_RED, COLOR_RESET);
+            } else {
+                printf("%s Agent '%s' not found\n", SYM_CROSS, name);
+            }
+            return true;
+        }
+
+        if (colors) {
+            printf("\n%s%sInbox for '%s':%s\n\n",
+                   COLOR_BOLD, COLOR_CYAN, name, COLOR_RESET);
+        } else {
+            printf("\nInbox for '%s':\n\n", name);
+        }
+
+        /* Try to receive messages (non-blocking) */
+        int msg_count = 0;
+        AgentMessage* msg;
+        while ((msg = message_bus_try_receive(registry->message_bus, agent->id)) != NULL) {
+            msg_count++;
+            if (colors) {
+                printf("  %s[%d]%s From: %s%s%s\n",
+                       COLOR_YELLOW, msg_count, COLOR_RESET,
+                       COLOR_CYAN, msg->sender_name ? msg->sender_name : msg->sender_id, COLOR_RESET);
+                printf("      %s\"%s\"%s\n", COLOR_GREEN, msg->payload_json, COLOR_RESET);
+            } else {
+                printf("  [%d] From: %s\n", msg_count,
+                       msg->sender_name ? msg->sender_name : msg->sender_id);
+                printf("      \"%s\"\n", msg->payload_json);
+            }
+            message_free(msg);
+        }
+
+        if (msg_count == 0) {
+            if (colors) {
+                printf("  %s(no messages)%s\n", COLOR_DIM, COLOR_RESET);
+            } else {
+                printf("  (no messages)\n");
+            }
+        } else {
+            if (colors) {
+                printf("\n  %s%d message(s) retrieved%s\n", COLOR_DIM, msg_count, COLOR_RESET);
+            } else {
+                printf("\n  %d message(s) retrieved\n", msg_count);
+            }
+        }
+        printf("\n");
+
+        return true;
+    }
+    else if (strncmp(args, "broadcast ", 10) == 0) {
+        /* /agent broadcast <from> <message> - Broadcast to all agents */
+        const char* params = args + 10;
+        while (*params == ' ') params++;
+
+        char from_name[64] = {0};
+        char message[512] = {0};
+
+        int n = 0;
+        if (sscanf(params, "%63s %n", from_name, &n) >= 1) {
+            const char* msg_start = params + n;
+            if (*msg_start == '"') {
+                msg_start++;
+                const char* end = strchr(msg_start, '"');
+                if (end) {
+                    size_t len = end - msg_start;
+                    if (len >= sizeof(message)) len = sizeof(message) - 1;
+                    strncpy(message, msg_start, len);
+                } else {
+                    strncpy(message, msg_start, sizeof(message) - 1);
+                }
+            } else {
+                strncpy(message, msg_start, sizeof(message) - 1);
+            }
+        }
+
+        if (!from_name[0] || !message[0]) {
+            if (colors) {
+                printf("%s%s Usage: /agent broadcast <from> <message>%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+                printf("%sExample: /agent broadcast coordinator \"Start phase 2\"%s\n",
+                       COLOR_DIM, COLOR_RESET);
+            } else {
+                printf("%s Usage: /agent broadcast <from> <message>\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        if (!registry || !registry->message_bus) {
+            if (colors) {
+                printf("%s%s Message bus not initialized%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Message bus not initialized\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        AgentInstance* from_agent = agent_registry_get(registry, from_name);
+        if (!from_agent) {
+            if (colors) {
+                printf("%s%s Sender agent '%s%s%s' not found%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_CYAN, from_name, COLOR_RED, COLOR_RESET);
+            } else {
+                printf("%s Sender agent '%s' not found\n", SYM_CROSS, from_name);
+            }
+            return true;
+        }
+
+        /* Create broadcast message (NULL receiver = broadcast) */
+        AgentMessage* msg = message_create(MSG_TYPE_CUSTOM, from_agent->id,
+                                           NULL, message);
+        if (msg) {
+            msg->sender_name = strdup(from_name);
+            /* Note: message_bus_broadcast takes ownership and frees the message */
+            if (message_bus_broadcast(registry->message_bus, msg)) {
+                if (colors) {
+                    printf("%s%s Broadcast from %s%s%s to all agents%s\n",
+                           COLOR_GREEN, SYM_CHECK,
+                           COLOR_CYAN, from_name, COLOR_RESET, COLOR_RESET);
+                    printf("  %s\"%s\"%s\n", COLOR_DIM, message, COLOR_RESET);
+                } else {
+                    printf("%s Broadcast from %s to all agents\n", SYM_CHECK, from_name);
+                    printf("  \"%s\"\n", message);
+                }
+            } else {
+                if (colors) {
+                    printf("%s%s Failed to broadcast message%s\n",
+                           COLOR_RED, SYM_CROSS, COLOR_RESET);
+                } else {
+                    printf("%s Failed to broadcast message\n", SYM_CROSS);
+                }
+            }
+            /* Do NOT free msg here - message_bus_broadcast takes ownership */
         }
 
         return true;

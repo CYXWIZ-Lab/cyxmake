@@ -199,6 +199,10 @@ Orchestrator* cyxmake_init(const char* config_path) {
         if (orch->shared_state) {
             agent_registry_set_shared_state(orch->agent_registry, orch->shared_state);
         }
+        /* Connect message bus to registry for inter-agent messaging */
+        if (orch->message_bus) {
+            agent_registry_set_message_bus(orch->agent_registry, orch->message_bus);
+        }
     }
 
     /* Create task queue with priority scheduling */

@@ -30,6 +30,7 @@ typedef struct ToolRegistry ToolRegistry;
 typedef struct ProjectContext ProjectContext;
 typedef struct AgentTask AgentTask;
 typedef struct SharedState SharedState;
+typedef struct MessageBus MessageBus;
 
 /* ============================================================================
  * Agent Types and States
@@ -193,6 +194,7 @@ typedef struct AgentRegistry {
     /* Shared memory pool (all agents access this) */
     char* shared_memory_path;       /* Path to .cyxmake/agent_memory.json */
     SharedState* shared_state;      /* Shared state for agent coordination */
+    MessageBus* message_bus;        /* Message bus for agent communication */
 
     /* Configuration */
     int max_concurrent;             /* Max concurrent agents */
@@ -236,6 +238,14 @@ void agent_registry_set_memory_path(AgentRegistry* registry, const char* path);
  * @param state Shared state instance (agents will auto-update during tasks)
  */
 void agent_registry_set_shared_state(AgentRegistry* registry, SharedState* state);
+
+/**
+ * Set the message bus for agent communication
+ *
+ * @param registry The registry
+ * @param bus Message bus instance for inter-agent messaging
+ */
+void agent_registry_set_message_bus(AgentRegistry* registry, MessageBus* bus);
 
 /* ============================================================================
  * Agent Management

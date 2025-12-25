@@ -255,6 +255,16 @@ void agent_registry_set_shared_state(AgentRegistry* registry, SharedState* state
     log_debug("Shared state set for agent registry");
 }
 
+void agent_registry_set_message_bus(AgentRegistry* registry, MessageBus* bus) {
+    if (!registry) return;
+
+    mutex_lock(&registry->registry_mutex);
+    registry->message_bus = bus;
+    mutex_unlock(&registry->registry_mutex);
+
+    log_debug("Message bus set for agent registry");
+}
+
 /* ============================================================================
  * Agent Instance Creation
  * ============================================================================ */
