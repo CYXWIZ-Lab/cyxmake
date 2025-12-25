@@ -195,6 +195,10 @@ Orchestrator* cyxmake_init(const char* config_path) {
     );
     if (orch->agent_registry) {
         log_debug("Agent registry created");
+        /* Connect shared state to registry for auto-updating during tasks */
+        if (orch->shared_state) {
+            agent_registry_set_shared_state(orch->agent_registry, orch->shared_state);
+        }
     }
 
     /* Create task queue with priority scheduling */

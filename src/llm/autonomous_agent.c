@@ -42,7 +42,7 @@ struct AutonomousAgent {
     int tool_count;
 
     /* Conversation */
-    AgentMessage messages[MAX_MESSAGES];
+    ChatMessage messages[MAX_MESSAGES];
     int message_count;
 
     /* State */
@@ -810,10 +810,10 @@ static char* build_messages_json(AutonomousAgent* agent) {
 
         const char* role = "user";
         switch (agent->messages[i].role) {
-            case AGENT_MSG_SYSTEM: role = "system"; break;
-            case AGENT_MSG_USER: role = "user"; break;
-            case AGENT_MSG_ASSISTANT: role = "assistant"; break;
-            case AGENT_MSG_TOOL: role = "tool"; break;
+            case CHAT_MSG_SYSTEM: role = "system"; break;
+            case CHAT_MSG_USER: role = "user"; break;
+            case CHAT_MSG_ASSISTANT: role = "assistant"; break;
+            case CHAT_MSG_TOOL: role = "tool"; break;
         }
         cJSON_AddStringToObject(msg, "role", role);
 
@@ -864,18 +864,18 @@ static ToolResult* execute_tool(AutonomousAgent* agent, const char* name, const 
 }
 
 /* Add message to conversation */
-static void add_message(AutonomousAgent* agent, AgentMessageRole role,
+static void add_message(AutonomousAgent* agent, ChatMessageRole role,
                         const char* content, const char* tool_call_id) {
     if (agent->message_count >= MAX_MESSAGES) {
         /* Shift messages to make room */
         free(agent->messages[0].content);
         free(agent->messages[0].tool_call_id);
         memmove(&agent->messages[0], &agent->messages[1],
-                sizeof(AgentMessage) * (MAX_MESSAGES - 1));
+                sizeof(ChatMessage) * (MAX_MESSAGES - 1));
         agent->message_count = MAX_MESSAGES - 1;
     }
 
-    AgentMessage* msg = &agent->messages[agent->message_count++];
+    ChatMessage* msg = &agent->messages[agent->message_count++];
     msg->role = role;
     msg->content = strdup_safe(content);
     msg->tool_call_id = strdup_safe(tool_call_id);
@@ -897,7 +897,7 @@ char* agent_run(AutonomousAgent* agent, const char* task) {
     }
 
     /* Add user message */
-    add_message(agent, AGENT_MSG_USER, task, NULL);
+    add_message(agent, CHAT_MSG_USER, task, NULL);
 
     char* final_response = NULL;
 
@@ -985,14 +985,14 @@ char* agent_run(AutonomousAgent* agent, const char* task) {
                     free(agent->messages[0].tool_calls);
                 }
                 memmove(&agent->messages[0], &agent->messages[1],
-                        sizeof(AgentMessage) * (MAX_MESSAGES - 1));
+                        sizeof(ChatMessage) * (MAX_MESSAGES - 1));
                 agent->message_count = MAX_MESSAGES - 1;
             }
 
             /* Add assistant message with tool calls */
-            AgentMessage* asst_msg = &agent->messages[agent->message_count++];
-            memset(asst_msg, 0, sizeof(AgentMessage));
-            asst_msg->role = AGENT_MSG_ASSISTANT;
+            ChatMessage* asst_msg = &agent->messages[agent->message_count++];
+            memset(asst_msg, 0, sizeof(ChatMessage));
+            asst_msg->role = CHAT_MSG_ASSISTANT;
             asst_msg->content = strdup_safe(response->content);
             asst_msg->tool_call_id = NULL;
             asst_msg->tool_calls = calloc(response->tool_call_count, sizeof(AgentToolCall));
@@ -1018,7 +1018,7 @@ char* agent_run(AutonomousAgent* agent, const char* task) {
                 char* result_content = result->success ? result->output : result->error;
                 if (!result_content) result_content = "No output";
 
-                add_message(agent, AGENT_MSG_TOOL, result_content, tc->id);
+                add_message(agent, CHAT_MSG_TOOL, result_content, tc->id);
 
                 if (agent->config.verbose) {
                     if (result->success) {

@@ -6,6 +6,7 @@
  */
 
 #include "cyxmake/agent_registry.h"
+#include "cyxmake/agent_comm.h"
 #include "cyxmake/task_queue.h"
 #include "cyxmake/smart_agent.h"
 #include "cyxmake/autonomous_agent.h"
@@ -242,6 +243,16 @@ void agent_registry_set_memory_path(AgentRegistry* registry, const char* path) {
     free(registry->shared_memory_path);
     registry->shared_memory_path = path ? strdup(path) : NULL;
     mutex_unlock(&registry->registry_mutex);
+}
+
+void agent_registry_set_shared_state(AgentRegistry* registry, SharedState* state) {
+    if (!registry) return;
+
+    mutex_lock(&registry->registry_mutex);
+    registry->shared_state = state;
+    mutex_unlock(&registry->registry_mutex);
+
+    log_debug("Shared state set for agent registry");
 }
 
 /* ============================================================================
@@ -885,6 +896,17 @@ typedef struct {
     char* task_description;
 } AsyncTaskContext;
 
+/* Helper to update shared state for an agent */
+static void update_agent_shared_state(AgentInstance* agent, const char* key_suffix,
+                                      const char* value) {
+    if (!agent || !agent->registry || !agent->registry->shared_state) return;
+    if (!agent->name || !key_suffix || !value) return;
+
+    char key[256];
+    snprintf(key, sizeof(key), "%s.%s", agent->name, key_suffix);
+    shared_state_set(agent->registry->shared_state, key, value);
+}
+
 /* Thread function for async execution */
 static void async_task_runner(void* arg) {
     AsyncTaskContext* ctx = (AsyncTaskContext*)arg;
@@ -905,6 +927,10 @@ static void async_task_runner(void* arg) {
 
     /* Execute the task synchronously in this thread */
     agent_set_state(agent, AGENT_STATE_RUNNING);
+
+    /* Auto-update shared state: task started */
+    update_agent_shared_state(agent, "status", "running");
+    update_agent_shared_state(agent, "task", task_desc);
     char* result = NULL;
 
     /* Check for mock mode */
@@ -962,11 +988,20 @@ static void async_task_runner(void* arg) {
         agent->tasks_completed++;
         free(agent->last_result);
         agent->last_result = strdup(result);
-        free(result);
     } else {
         agent->tasks_failed++;
     }
     mutex_unlock(&agent->state_mutex);
+
+    /* Auto-update shared state: task completed */
+    if (result) {
+        update_agent_shared_state(agent, "status", "completed");
+        update_agent_shared_state(agent, "result", result);
+        free(result);
+    } else {
+        update_agent_shared_state(agent, "status", "failed");
+        update_agent_shared_state(agent, "result", "Task execution failed");
+    }
 
     log_debug("Async task completed for agent '%s'", agent->name);
 

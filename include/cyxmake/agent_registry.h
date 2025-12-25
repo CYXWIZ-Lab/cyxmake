@@ -29,6 +29,7 @@ typedef struct AIProvider AIProvider;
 typedef struct ToolRegistry ToolRegistry;
 typedef struct ProjectContext ProjectContext;
 typedef struct AgentTask AgentTask;
+typedef struct SharedState SharedState;
 
 /* ============================================================================
  * Agent Types and States
@@ -191,6 +192,7 @@ typedef struct AgentRegistry {
 
     /* Shared memory pool (all agents access this) */
     char* shared_memory_path;       /* Path to .cyxmake/agent_memory.json */
+    SharedState* shared_state;      /* Shared state for agent coordination */
 
     /* Configuration */
     int max_concurrent;             /* Max concurrent agents */
@@ -226,6 +228,14 @@ void agent_registry_free(AgentRegistry* registry);
  * @param path Path to shared memory file
  */
 void agent_registry_set_memory_path(AgentRegistry* registry, const char* path);
+
+/**
+ * Set the shared state for agent coordination
+ *
+ * @param registry The registry
+ * @param state Shared state instance (agents will auto-update during tasks)
+ */
+void agent_registry_set_shared_state(AgentRegistry* registry, SharedState* state);
 
 /* ============================================================================
  * Agent Management

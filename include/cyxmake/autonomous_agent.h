@@ -69,19 +69,19 @@ typedef struct {
  * ============================================================================ */
 
 typedef enum {
-    AGENT_MSG_SYSTEM,
-    AGENT_MSG_USER,
-    AGENT_MSG_ASSISTANT,
-    AGENT_MSG_TOOL
-} AgentMessageRole;
+    CHAT_MSG_SYSTEM,
+    CHAT_MSG_USER,
+    CHAT_MSG_ASSISTANT,
+    CHAT_MSG_TOOL
+} ChatMessageRole;
 
 typedef struct {
-    AgentMessageRole role;
+    ChatMessageRole role;
     char* content;
     char* tool_call_id;     /* For tool results */
     AgentToolCall* tool_calls;  /* For assistant messages with tool calls */
     int tool_call_count;
-} AgentMessage;
+} ChatMessage;
 
 /* ============================================================================
  * Autonomous Agent
