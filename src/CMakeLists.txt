@@ -35,8 +35,9 @@ set(CYXMAKE_CORE_SOURCES
     tools/tool_discovery.c
     tools/tool_executor.c
 
-    # Phase 2: Permission System (shared between core and CLI)
+    # Phase 2: Security System (permissions, audit, dry-run, rollback)
     cli/permission.c
+    cli/security.c
 
     # Multi-Agent System
     agents/threading.c
