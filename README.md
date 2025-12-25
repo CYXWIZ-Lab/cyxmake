@@ -288,6 +288,63 @@ Messages for 'builder': (2 messages)
       All agents please report status
 ```
 
+**Conflict Resolution:**
+
+When multiple agents try to access the same resource, conflicts are detected and resolved:
+
+```bash
+# Agent locks a resource
+cyxmake> /agent lock builder CMakeLists.txt
+✓ Agent 'builder' locked resource 'CMakeLists.txt'
+
+# Another agent tries to lock the same resource
+cyxmake> /agent lock fixer CMakeLists.txt
+[!] Resource 'CMakeLists.txt' already locked by another agent
+
+# View pending conflicts
+cyxmake> /agent conflicts
+=== Conflict History ===
+
+Conflict 1: resource
+  Agents: 'builder' vs 'fixer'
+  Resource: CMakeLists.txt
+  Status: UNRESOLVED
+
+# Resolve the conflict interactively
+cyxmake> /agent resolve
+
+=== Conflict Detected ===
+
+Type: resource
+Resource: CMakeLists.txt
+
+Agents:
+  [1] builder: lock request
+  [2] fixer: lock request
+
+Choose resolution:
+  1 - Let 'builder' proceed first
+  2 - Let 'fixer' proceed first
+  3 - Both proceed (sequential)
+  4 - Cancel both
+
+Choice [1-4]: 1
+✓ Conflict resolved: agent1_wins
+
+# Release resource when done
+cyxmake> /agent unlock builder CMakeLists.txt
+✓ Agent 'builder' released resource 'CMakeLists.txt'
+```
+
+**Conflict Resolution Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `/agent lock <name> <resource>` | Request exclusive access to resource |
+| `/agent unlock <name> <resource>` | Release resource lock |
+| `/agent conflicts` | List all conflicts |
+| `/agent resolve` | Interactively resolve next conflict |
+
 ### Autonomous Error Recovery
 
 When builds fail, CyxMake:

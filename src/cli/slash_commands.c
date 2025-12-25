@@ -2250,6 +2250,12 @@ static AgentRegistry* get_agent_registry(ReplSession* session) {
     return cyxmake_get_agent_registry(session->orchestrator);
 }
 
+/* Helper to get agent coordinator from session */
+static AgentCoordinator* get_coordinator(ReplSession* session) {
+    if (!session || !session->orchestrator) return NULL;
+    return cyxmake_get_coordinator(session->orchestrator);
+}
+
 /* Helper to print agent state with color */
 static void print_agent_state(AgentState state, bool colors) {
     const char* state_str = agent_state_to_string(state);
@@ -2293,6 +2299,11 @@ bool cmd_agent(ReplSession* session, const char* args) {
             printf("  %s/agent send <from> <to> <msg>%s   - Send message between agents\n", COLOR_CYAN, COLOR_RESET);
             printf("  %s/agent inbox <name>%s             - Check agent's messages\n", COLOR_CYAN, COLOR_RESET);
             printf("  %s/agent broadcast <from> <msg>%s   - Broadcast to all agents\n", COLOR_CYAN, COLOR_RESET);
+            printf("\n%sConflict Resolution:%s\n", COLOR_BOLD, COLOR_RESET);
+            printf("  %s/agent conflicts%s                - List pending conflicts\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent resolve%s                  - Resolve next conflict\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent lock <name> <resource>%s   - Request resource lock\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/agent unlock <name> <resource>%s - Release resource lock\n", COLOR_CYAN, COLOR_RESET);
 
             printf("\n%sAgent Types:%s\n", COLOR_BOLD, COLOR_RESET);
             printf("  %ssmart%s  - Intelligent reasoning agent (SmartAgent)\n", COLOR_GREEN, COLOR_RESET);
@@ -2324,6 +2335,11 @@ bool cmd_agent(ReplSession* session, const char* args) {
             printf("  /agent send <from> <to> <msg>    - Send message between agents\n");
             printf("  /agent inbox <name>              - Check agent's messages\n");
             printf("  /agent broadcast <from> <msg>    - Broadcast to all agents\n");
+            printf("\nConflict Resolution:\n");
+            printf("  /agent conflicts                 - List pending conflicts\n");
+            printf("  /agent resolve                   - Resolve next conflict\n");
+            printf("  /agent lock <name> <resource>    - Request resource lock\n");
+            printf("  /agent unlock <name> <resource>  - Release resource lock\n");
 
             printf("\nAgent Types:\n");
             printf("  smart  - Intelligent reasoning agent\n");
@@ -3506,6 +3522,254 @@ bool cmd_agent(ReplSession* session, const char* args) {
                 }
             }
             /* Do NOT free msg here - message_bus_broadcast takes ownership */
+        }
+
+        return true;
+    }
+    else if (strncmp(args, "conflicts", 9) == 0) {
+        /* /agent conflicts - List pending conflicts */
+        AgentCoordinator* coord = get_coordinator(session);
+        if (!coord) {
+            if (colors) {
+                printf("%s%s Agent coordinator not initialized%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Agent coordinator not initialized\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        char* report = coordinator_conflict_report(coord);
+        if (report) {
+            if (colors) {
+                printf("\n%s%s%s%s\n", COLOR_BOLD, COLOR_CYAN, report, COLOR_RESET);
+            } else {
+                printf("\n%s\n", report);
+            }
+            free(report);
+        }
+        return true;
+    }
+    else if (strncmp(args, "resolve", 7) == 0) {
+        /* /agent resolve - Resolve pending conflict */
+        AgentCoordinator* coord = get_coordinator(session);
+        if (!coord) {
+            if (colors) {
+                printf("%s%s Agent coordinator not initialized%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Agent coordinator not initialized\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        AgentConflict* conflict = coordinator_detect_conflict(coord);
+        if (!conflict) {
+            if (colors) {
+                printf("%s%s No pending conflicts%s\n",
+                       COLOR_GREEN, SYM_CHECK, COLOR_RESET);
+            } else {
+                printf("%s No pending conflicts\n", SYM_CHECK);
+            }
+            return true;
+        }
+
+        /* Display conflict info */
+        if (colors) {
+            printf("\n%s%s=== Conflict Detected ===%s\n\n", COLOR_BOLD, COLOR_YELLOW, COLOR_RESET);
+            printf("%sType:%s %s\n", COLOR_BOLD, COLOR_RESET, conflict_type_to_string(conflict->type));
+            printf("%sResource:%s %s\n", COLOR_BOLD, COLOR_RESET, conflict->resource_id);
+            printf("\n%sAgents:%s\n", COLOR_BOLD, COLOR_RESET);
+            printf("  %s[1]%s %s%s%s: %s\n",
+                   COLOR_CYAN, COLOR_RESET,
+                   COLOR_GREEN, conflict->agent1_name ? conflict->agent1_name : conflict->agent1_id, COLOR_RESET,
+                   conflict->agent1_action ? conflict->agent1_action : "(unknown action)");
+            printf("  %s[2]%s %s%s%s: %s\n",
+                   COLOR_CYAN, COLOR_RESET,
+                   COLOR_GREEN, conflict->agent2_name ? conflict->agent2_name : conflict->agent2_id, COLOR_RESET,
+                   conflict->agent2_action ? conflict->agent2_action : "(unknown action)");
+            printf("\n%sChoose resolution:%s\n", COLOR_BOLD, COLOR_RESET);
+            printf("  %s1%s - Let '%s' proceed first\n", COLOR_CYAN, COLOR_RESET,
+                   conflict->agent1_name ? conflict->agent1_name : "Agent 1");
+            printf("  %s2%s - Let '%s' proceed first\n", COLOR_CYAN, COLOR_RESET,
+                   conflict->agent2_name ? conflict->agent2_name : "Agent 2");
+            printf("  %s3%s - Both proceed (sequential)\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s4%s - Cancel both\n", COLOR_CYAN, COLOR_RESET);
+            printf("\n%sChoice [1-4]: %s", COLOR_BOLD, COLOR_RESET);
+        } else {
+            printf("\n=== Conflict Detected ===\n\n");
+            printf("Type: %s\n", conflict_type_to_string(conflict->type));
+            printf("Resource: %s\n", conflict->resource_id);
+            printf("\nAgents:\n");
+            printf("  [1] %s: %s\n",
+                   conflict->agent1_name ? conflict->agent1_name : conflict->agent1_id,
+                   conflict->agent1_action ? conflict->agent1_action : "(unknown action)");
+            printf("  [2] %s: %s\n",
+                   conflict->agent2_name ? conflict->agent2_name : conflict->agent2_id,
+                   conflict->agent2_action ? conflict->agent2_action : "(unknown action)");
+            printf("\nChoose resolution:\n");
+            printf("  1 - Let '%s' proceed first\n",
+                   conflict->agent1_name ? conflict->agent1_name : "Agent 1");
+            printf("  2 - Let '%s' proceed first\n",
+                   conflict->agent2_name ? conflict->agent2_name : "Agent 2");
+            printf("  3 - Both proceed (sequential)\n");
+            printf("  4 - Cancel both\n");
+            printf("\nChoice [1-4]: ");
+        }
+        fflush(stdout);
+
+        /* Read user choice */
+        char choice_str[16];
+        if (fgets(choice_str, sizeof(choice_str), stdin)) {
+            int choice = atoi(choice_str);
+            ResolutionResult result;
+
+            switch (choice) {
+                case 1: result = RESOLUTION_RESULT_AGENT1; break;
+                case 2: result = RESOLUTION_RESULT_AGENT2; break;
+                case 3: result = RESOLUTION_RESULT_BOTH; break;
+                case 4: result = RESOLUTION_RESULT_NEITHER; break;
+                default:
+                    if (colors) {
+                        printf("%s%s Invalid choice, defaulting to agent 1%s\n",
+                               COLOR_YELLOW, SYM_WARN, COLOR_RESET);
+                    } else {
+                        printf("%s Invalid choice, defaulting to agent 1\n", SYM_WARN);
+                    }
+                    result = RESOLUTION_RESULT_AGENT1;
+            }
+
+            /* Apply resolution */
+            conflict->resolution = result;
+            conflict->resolved_at = time(NULL);
+
+            if (colors) {
+                printf("%s%s Conflict resolved: %s%s%s\n",
+                       COLOR_GREEN, SYM_CHECK,
+                       COLOR_CYAN, resolution_result_to_string(result), COLOR_RESET);
+            } else {
+                printf("%s Conflict resolved: %s\n", SYM_CHECK, resolution_result_to_string(result));
+            }
+        }
+
+        return true;
+    }
+    else if (strncmp(args, "lock ", 5) == 0) {
+        /* /agent lock <name> <resource> - Request resource lock */
+        const char* params = args + 5;
+        while (*params == ' ') params++;
+
+        char name[64] = {0};
+        char resource[256] = {0};
+
+        int parsed = sscanf(params, "%63s %255s", name, resource);
+        if (parsed < 2) {
+            if (colors) {
+                printf("%s%s Usage: /agent lock <name> <resource>%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+                printf("%sExample: /agent lock builder CMakeLists.txt%s\n",
+                       COLOR_DIM, COLOR_RESET);
+            } else {
+                printf("%s Usage: /agent lock <name> <resource>\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        AgentCoordinator* coord = get_coordinator(session);
+        if (!coord) {
+            if (colors) {
+                printf("%s%s Agent coordinator not initialized%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Agent coordinator not initialized\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        AgentInstance* agent = agent_registry_get(registry, name);
+        if (!agent) {
+            if (colors) {
+                printf("%s%s Agent '%s%s%s' not found%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_CYAN, name, COLOR_RED, COLOR_RESET);
+            } else {
+                printf("%s Agent '%s' not found\n", SYM_CROSS, name);
+            }
+            return true;
+        }
+
+        if (coordinator_request_resource(coord, agent->id, resource, "lock request")) {
+            if (colors) {
+                printf("%s%s Agent '%s%s%s' locked resource '%s%s%s'%s\n",
+                       COLOR_GREEN, SYM_CHECK,
+                       COLOR_CYAN, name, COLOR_RESET,
+                       COLOR_YELLOW, resource, COLOR_RESET, COLOR_RESET);
+            } else {
+                printf("%s Agent '%s' locked resource '%s'\n", SYM_CHECK, name, resource);
+            }
+        } else {
+            if (colors) {
+                printf("%s%s Resource '%s%s%s' already locked by another agent%s\n",
+                       COLOR_YELLOW, SYM_WARN,
+                       COLOR_CYAN, resource, COLOR_YELLOW, COLOR_RESET);
+                printf("%sUse '/agent conflicts' to see pending conflicts%s\n",
+                       COLOR_DIM, COLOR_RESET);
+            } else {
+                printf("%s Resource '%s' already locked by another agent\n", SYM_WARN, resource);
+                printf("Use '/agent conflicts' to see pending conflicts\n");
+            }
+        }
+
+        return true;
+    }
+    else if (strncmp(args, "unlock ", 7) == 0) {
+        /* /agent unlock <name> <resource> - Release resource lock */
+        const char* params = args + 7;
+        while (*params == ' ') params++;
+
+        char name[64] = {0};
+        char resource[256] = {0};
+
+        int parsed = sscanf(params, "%63s %255s", name, resource);
+        if (parsed < 2) {
+            if (colors) {
+                printf("%s%s Usage: /agent unlock <name> <resource>%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Usage: /agent unlock <name> <resource>\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        AgentCoordinator* coord = get_coordinator(session);
+        if (!coord) {
+            if (colors) {
+                printf("%s%s Agent coordinator not initialized%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Agent coordinator not initialized\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        AgentInstance* agent = agent_registry_get(registry, name);
+        if (!agent) {
+            if (colors) {
+                printf("%s%s Agent '%s%s%s' not found%s\n",
+                       COLOR_RED, SYM_CROSS, COLOR_CYAN, name, COLOR_RED, COLOR_RESET);
+            } else {
+                printf("%s Agent '%s' not found\n", SYM_CROSS, name);
+            }
+            return true;
+        }
+
+        coordinator_release_resource(coord, agent->id, resource);
+        if (colors) {
+            printf("%s%s Agent '%s%s%s' released resource '%s%s%s'%s\n",
+                   COLOR_GREEN, SYM_CHECK,
+                   COLOR_CYAN, name, COLOR_RESET,
+                   COLOR_YELLOW, resource, COLOR_RESET, COLOR_RESET);
+        } else {
+            printf("%s Agent '%s' released resource '%s'\n", SYM_CHECK, name, resource);
         }
 
         return true;
