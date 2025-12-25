@@ -222,29 +222,31 @@ Waiting for agent 'builder' to complete...
 
 **Shared Memory (Multi-Agent State):**
 
-Agents share a persistent key-value store for coordination:
+Agents share a persistent key-value store for coordination. State is **automatically updated** during task execution:
 
 ```bash
-cyxmake> /memory state
-Shared State: (empty)
+cyxmake> /agent spawn worker smart --mock
+✓ Created agent 'worker' (type: smart)
 
-cyxmake> /memory state set build.config Release
-✓ Set 'build.config' = 'Release'
-
-cyxmake> /memory state set project.status building
-✓ Set 'project.status' = 'building'
+cyxmake> /agent assign worker "Build the project"
+✓ Task assigned to 'worker': Build the project
 
 cyxmake> /memory state
-Shared State: (2 entries)
-  build.config = Release
-  project.status = building
-
-cyxmake> /memory state get build.config
-build.config = Release
-
-cyxmake> /memory state save
-✓ Shared state saved
+Shared State: (3 entries)
+  worker.status = completed
+  worker.task = Build the project
+  worker.result = [MOCK RESULT] Agent 'worker' completed task...
 ```
+
+**Auto-Updated Keys** (set automatically during task lifecycle):
+
+| Key | Description |
+|-----|-------------|
+| `<agent>.status` | `running` → `completed` or `failed` |
+| `<agent>.task` | Current task description |
+| `<agent>.result` | Task result or error message |
+
+**Manual Commands:**
 
 | Command | Description |
 |---------|-------------|
