@@ -1582,6 +1582,207 @@ bool cmd_memory(ReplSession* session, const char* args) {
             } else {
                 printf("%s Added test learning data\n", SYM_CHECK);
             }
+        } else if (strncmp(args, "state", 5) == 0 && (args[5] == ' ' || args[5] == '\0')) {
+            /* /memory state - Access shared state for multi-agent system */
+            const char* state_args = args[5] == ' ' ? args + 6 : "";
+            while (*state_args == ' ') state_args++;
+
+            /* Get shared state from orchestrator */
+            SharedState* shared = session->orchestrator ?
+                                  cyxmake_get_shared_state(session->orchestrator) : NULL;
+
+            if (!shared) {
+                if (colors) {
+                    printf("%s%s Shared state not available%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+                    printf("%s(Multi-agent system not initialized)%s\n", COLOR_DIM, COLOR_RESET);
+                } else {
+                    printf("%s Shared state not available\n", SYM_CROSS);
+                    printf("(Multi-agent system not initialized)\n");
+                }
+                printf("\n");
+                return true;
+            }
+
+            if (strncmp(state_args, "get ", 4) == 0) {
+                /* /memory state get <key> */
+                const char* key = state_args + 4;
+                while (*key == ' ') key++;
+
+                if (!*key) {
+                    printf("Usage: /memory state get <key>\n");
+                } else {
+                    char* value = shared_state_get(shared, key);
+                    if (value) {
+                        if (colors) {
+                            printf("%s%s%s = %s%s%s\n", COLOR_CYAN, key, COLOR_RESET,
+                                   COLOR_GREEN, value, COLOR_RESET);
+                        } else {
+                            printf("%s = %s\n", key, value);
+                        }
+                        free(value);
+                    } else {
+                        if (colors) {
+                            printf("%sKey '%s' not found%s\n", COLOR_DIM, key, COLOR_RESET);
+                        } else {
+                            printf("Key '%s' not found\n", key);
+                        }
+                    }
+                }
+            } else if (strncmp(state_args, "set ", 4) == 0) {
+                /* /memory state set <key> <value> */
+                const char* rest = state_args + 4;
+                while (*rest == ' ') rest++;
+
+                /* Parse key and value */
+                char key[256] = {0};
+                const char* value = NULL;
+
+                const char* space = strchr(rest, ' ');
+                if (space) {
+                    size_t key_len = space - rest;
+                    if (key_len < sizeof(key)) {
+                        strncpy(key, rest, key_len);
+                        key[key_len] = '\0';
+                        value = space + 1;
+                        while (*value == ' ') value++;
+                    }
+                }
+
+                if (!key[0] || !value || !*value) {
+                    printf("Usage: /memory state set <key> <value>\n");
+                } else {
+                    if (shared_state_set(shared, key, value)) {
+                        if (colors) {
+                            printf("%s%s%s Set '%s%s%s' = '%s%s%s'\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET,
+                                   COLOR_CYAN, key, COLOR_RESET, COLOR_GREEN, value, COLOR_RESET);
+                        } else {
+                            printf("%s Set '%s' = '%s'\n", SYM_CHECK, key, value);
+                        }
+                    } else {
+                        if (colors) {
+                            printf("%s%s Failed to set key (may be locked)%s\n",
+                                   COLOR_RED, SYM_CROSS, COLOR_RESET);
+                        } else {
+                            printf("%s Failed to set key (may be locked)\n", SYM_CROSS);
+                        }
+                    }
+                }
+            } else if (strncmp(state_args, "delete ", 7) == 0 || strncmp(state_args, "del ", 4) == 0) {
+                /* /memory state delete <key> */
+                const char* key = state_args + (strncmp(state_args, "del ", 4) == 0 ? 4 : 7);
+                while (*key == ' ') key++;
+
+                if (!*key) {
+                    printf("Usage: /memory state delete <key>\n");
+                } else {
+                    if (shared_state_delete(shared, key)) {
+                        if (colors) {
+                            printf("%s%s%s Deleted '%s%s%s'\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET,
+                                   COLOR_CYAN, key, COLOR_RESET);
+                        } else {
+                            printf("%s Deleted '%s'\n", SYM_CHECK, key);
+                        }
+                    } else {
+                        if (colors) {
+                            printf("%s%s Key '%s' not found or locked%s\n",
+                                   COLOR_RED, SYM_CROSS, key, COLOR_RESET);
+                        } else {
+                            printf("%s Key '%s' not found or locked\n", SYM_CROSS, key);
+                        }
+                    }
+                }
+            } else if (strcmp(state_args, "save") == 0) {
+                /* /memory state save */
+                if (shared_state_save(shared)) {
+                    if (colors) {
+                        printf("%s%s Shared state saved%s\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET);
+                    } else {
+                        printf("%s Shared state saved\n", SYM_CHECK);
+                    }
+                } else {
+                    if (colors) {
+                        printf("%s%s Failed to save shared state%s\n",
+                               COLOR_RED, SYM_CROSS, COLOR_RESET);
+                        printf("%s(No persistence path configured)%s\n", COLOR_DIM, COLOR_RESET);
+                    } else {
+                        printf("%s Failed to save shared state\n", SYM_CROSS);
+                        printf("(No persistence path configured)\n");
+                    }
+                }
+            } else if (strcmp(state_args, "clear") == 0) {
+                /* /memory state clear */
+                shared_state_clear(shared);
+                if (colors) {
+                    printf("%s%s Shared state cleared%s\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET);
+                } else {
+                    printf("%s Shared state cleared\n", SYM_CHECK);
+                }
+            } else {
+                /* /memory state - List all entries */
+                int count = 0;
+                char** keys = shared_state_keys(shared, &count);
+
+                if (colors) {
+                    printf("%sShared State:%s", COLOR_BOLD, COLOR_RESET);
+                    if (count == 0) {
+                        printf(" %s(empty)%s\n", COLOR_DIM, COLOR_RESET);
+                    } else {
+                        printf(" %s(%d entries)%s\n", COLOR_DIM, count, COLOR_RESET);
+                    }
+                } else {
+                    printf("Shared State:");
+                    if (count == 0) {
+                        printf(" (empty)\n");
+                    } else {
+                        printf(" (%d entries)\n", count);
+                    }
+                }
+
+                if (keys) {
+                    for (int i = 0; i < count; i++) {
+                        char* value = shared_state_get(shared, keys[i]);
+                        const char* locker = shared_state_locked_by(shared, keys[i]);
+
+                        if (colors) {
+                            printf("  %s%s%s = %s%s%s",
+                                   COLOR_CYAN, keys[i], COLOR_RESET,
+                                   COLOR_GREEN, value ? value : "(null)", COLOR_RESET);
+                            if (locker) {
+                                printf(" %s[locked by %s]%s", COLOR_YELLOW, locker, COLOR_RESET);
+                            }
+                        } else {
+                            printf("  %s = %s", keys[i], value ? value : "(null)");
+                            if (locker) {
+                                printf(" [locked by %s]", locker);
+                            }
+                        }
+                        printf("\n");
+
+                        free(value);
+                        free(keys[i]);
+                    }
+                    free(keys);
+                }
+
+                printf("\n");
+                if (colors) {
+                    printf("%sCommands:%s\n", COLOR_BOLD, COLOR_RESET);
+                    printf("  %s/memory state%s           - List all entries\n", COLOR_CYAN, COLOR_RESET);
+                    printf("  %s/memory state get%s <key> - Get value for key\n", COLOR_CYAN, COLOR_RESET);
+                    printf("  %s/memory state set%s <key> <value> - Set key/value\n", COLOR_CYAN, COLOR_RESET);
+                    printf("  %s/memory state delete%s <key>      - Delete key\n", COLOR_CYAN, COLOR_RESET);
+                    printf("  %s/memory state save%s      - Force save to disk\n", COLOR_CYAN, COLOR_RESET);
+                    printf("  %s/memory state clear%s     - Clear all entries\n", COLOR_CYAN, COLOR_RESET);
+                } else {
+                    printf("Commands:\n");
+                    printf("  /memory state           - List all entries\n");
+                    printf("  /memory state get <key> - Get value for key\n");
+                    printf("  /memory state set <key> <value> - Set key/value\n");
+                    printf("  /memory state delete <key>      - Delete key\n");
+                    printf("  /memory state save      - Force save to disk\n");
+                    printf("  /memory state clear     - Clear all entries\n");
+                }
+            }
         } else {
             printf("Unknown subcommand: %s\n", args);
             printf("Use '/memory' for help.\n");
@@ -1651,11 +1852,13 @@ bool cmd_memory(ReplSession* session, const char* args) {
             printf("  %s/memory save%s   - Save memory to disk\n", COLOR_CYAN, COLOR_RESET);
             printf("  %s/memory clear%s  - Clear all memory\n", COLOR_CYAN, COLOR_RESET);
             printf("  %s/memory test%s   - Add test data\n", COLOR_CYAN, COLOR_RESET);
+            printf("  %s/memory state%s  - Multi-agent shared state\n", COLOR_CYAN, COLOR_RESET);
         } else {
             printf("Commands:\n");
             printf("  /memory save   - Save memory to disk\n");
             printf("  /memory clear  - Clear all memory\n");
             printf("  /memory test   - Add test data\n");
+            printf("  /memory state  - Multi-agent shared state\n");
         }
     }
 

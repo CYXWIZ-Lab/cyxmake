@@ -220,6 +220,43 @@ Waiting for agent 'builder' to complete...
 | `/agent wait <name>` | Wait for agent to complete |
 | `/agent terminate <name>` | Stop an agent |
 
+**Shared Memory (Multi-Agent State):**
+
+Agents share a persistent key-value store for coordination:
+
+```bash
+cyxmake> /memory state
+Shared State: (empty)
+
+cyxmake> /memory state set build.config Release
+✓ Set 'build.config' = 'Release'
+
+cyxmake> /memory state set project.status building
+✓ Set 'project.status' = 'building'
+
+cyxmake> /memory state
+Shared State: (2 entries)
+  build.config = Release
+  project.status = building
+
+cyxmake> /memory state get build.config
+build.config = Release
+
+cyxmake> /memory state save
+✓ Shared state saved
+```
+
+| Command | Description |
+|---------|-------------|
+| `/memory state` | List all shared state entries |
+| `/memory state get <key>` | Get value for key |
+| `/memory state set <key> <value>` | Set key/value pair |
+| `/memory state delete <key>` | Delete a key |
+| `/memory state save` | Force save to disk |
+| `/memory state clear` | Clear all entries |
+
+State persists to `.cyxmake/agent_state.json` and loads automatically on startup.
+
 ### Autonomous Error Recovery
 
 When builds fail, CyxMake:
