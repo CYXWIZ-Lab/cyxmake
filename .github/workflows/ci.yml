@@ -1,0 +1,189 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  # ============================================================
+  # Windows Build
+  # ============================================================
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Configure CMake
+      run: cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCYXMAKE_BUILD_TESTS=ON
+
+    - name: Build
+      run: cmake --build build --config ${{env.BUILD_TYPE}}
+
+    - name: Run Tests
+      working-directory: build
+      run: ctest -C ${{env.BUILD_TYPE}} --output-on-failure --timeout 120
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: cyxmake-windows
+        path: build/bin/${{env.BUILD_TYPE}}/cyxmake.exe
+
+  # ============================================================
+  # Linux Build
+  # ============================================================
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential libcurl4-openssl-dev
+
+    - name: Configure CMake
+      run: cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCYXMAKE_BUILD_TESTS=ON
+
+    - name: Build
+      run: cmake --build build --config ${{env.BUILD_TYPE}} -j$(nproc)
+
+    - name: Run Tests
+      working-directory: build
+      run: ctest -C ${{env.BUILD_TYPE}} --output-on-failure --timeout 120
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: cyxmake-linux
+        path: build/bin/cyxmake
+
+  # ============================================================
+  # macOS Build
+  # ============================================================
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Configure CMake
+      run: cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCYXMAKE_BUILD_TESTS=ON
+
+    - name: Build
+      run: cmake --build build --config ${{env.BUILD_TYPE}} -j$(sysctl -n hw.ncpu)
+
+    - name: Run Tests
+      working-directory: build
+      run: ctest -C ${{env.BUILD_TYPE}} --output-on-failure --timeout 120
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: cyxmake-macos
+        path: build/bin/cyxmake
+
+  # ============================================================
+  # Address Sanitizer (Linux)
+  # ============================================================
+  sanitizer-asan:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential libcurl4-openssl-dev
+
+    - name: Configure CMake with ASan
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCYXMAKE_BUILD_TESTS=ON \
+          -DCYXMAKE_USE_SANITIZERS=ON
+
+    - name: Build
+      run: cmake --build build -j$(nproc)
+
+    - name: Run Tests with ASan
+      working-directory: build
+      env:
+        ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+      run: ctest --output-on-failure --timeout 300
+
+  # ============================================================
+  # Memory Leak Check (Valgrind on Linux)
+  # ============================================================
+  memory-check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential libcurl4-openssl-dev valgrind
+
+    - name: Configure CMake
+      run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DCYXMAKE_BUILD_TESTS=ON
+
+    - name: Build
+      run: cmake --build build -j$(nproc)
+
+    - name: Run Valgrind on Tests
+      working-directory: build
+      run: |
+        for test in bin/test_*; do
+          if [ -x "$test" ]; then
+            echo "Running valgrind on $test..."
+            valgrind --leak-check=full --error-exitcode=1 --track-origins=yes \
+              --suppressions=../valgrind.supp "$test" || echo "Valgrind found issues in $test"
+          fi
+        done
+      continue-on-error: true  # Don't fail build on valgrind issues yet
+
+  # ============================================================
+  # Code Quality Checks
+  # ============================================================
+  code-quality:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check for TODO/FIXME comments
+      run: |
+        echo "Checking for TODO/FIXME comments..."
+        grep -rn "TODO\|FIXME" src/ include/ --include="*.c" --include="*.h" || true
+
+    - name: Check line lengths
+      run: |
+        echo "Checking for long lines (>120 chars)..."
+        find src/ include/ -name "*.c" -o -name "*.h" | xargs awk 'length > 120 {print FILENAME ":" NR ": " $0}' | head -20 || true
+
+    - name: Count lines of code
+      run: |
+        echo "Lines of code:"
+        find src/ -name "*.c" | xargs wc -l | tail -1
+        echo "Lines of headers:"
+        find include/ -name "*.h" | xargs wc -l | tail -1

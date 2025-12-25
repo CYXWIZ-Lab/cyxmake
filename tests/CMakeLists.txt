@@ -90,4 +90,51 @@ add_custom_command(TARGET test_recovery_integration POST_BUILD
     COMMENT "Copying test_recovery_integration to bin directory"
 )
 
-message(STATUS "Tests configured: test_logger, test_error_recovery, test_tool_executor, test_ai_agent, test_recovery_integration")
+# Security System test executable (Phase 2)
+add_executable(test_security test_security.c)
+target_link_libraries(test_security PRIVATE cyxmake_core)
+target_include_directories(test_security PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+set_target_properties(test_security PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+
+add_custom_command(TARGET test_security POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        $<TARGET_FILE:test_security>
+        ${CMAKE_BINARY_DIR}/bin/test_security${CMAKE_EXECUTABLE_SUFFIX}
+    COMMENT "Copying test_security to bin directory"
+)
+
+# Fix Validation test executable (Phase 3)
+add_executable(test_fix_validation test_fix_validation.c)
+target_link_libraries(test_fix_validation PRIVATE cyxmake_core)
+target_include_directories(test_fix_validation PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+set_target_properties(test_fix_validation PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+
+add_custom_command(TARGET test_fix_validation POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        $<TARGET_FILE:test_fix_validation>
+        ${CMAKE_BINARY_DIR}/bin/test_fix_validation${CMAKE_EXECUTABLE_SUFFIX}
+    COMMENT "Copying test_fix_validation to bin directory"
+)
+
+# Register tests with CTest
+add_test(NAME test_logger COMMAND test_logger)
+add_test(NAME test_error_recovery COMMAND test_error_recovery)
+add_test(NAME test_tool_executor COMMAND test_tool_executor)
+add_test(NAME test_ai_agent COMMAND test_ai_agent)
+add_test(NAME test_recovery_integration COMMAND test_recovery_integration)
+add_test(NAME test_security COMMAND test_security)
+add_test(NAME test_fix_validation COMMAND test_fix_validation)
+
+message(STATUS "Tests configured: test_logger, test_error_recovery, test_tool_executor, test_ai_agent, test_recovery_integration, test_security, test_fix_validation")

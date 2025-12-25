@@ -1,0 +1,51 @@
+# Valgrind suppressions for CyxMake
+# Phase 4: Memory leak detection
+
+# Suppress known issues in system libraries
+{
+   dlopen_leak
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:dlopen*
+}
+
+{
+   pthread_leak
+   Memcheck:Leak
+   match-leak-kinds: possible
+   ...
+   fun:pthread_create*
+}
+
+# Suppress llama.cpp internal allocations (managed by llama)
+{
+   llama_model_load
+   Memcheck:Leak
+   ...
+   fun:llama_model_load*
+}
+
+{
+   ggml_allocator
+   Memcheck:Leak
+   ...
+   fun:ggml_*
+}
+
+# Suppress cJSON internal state (intentional static allocation)
+{
+   cjson_hooks
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   ...
+   fun:cJSON_*
+}
+
+# Suppress intentional static buffers in logger
+{
+   logger_static_buffer
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   fun:log_*
+}
