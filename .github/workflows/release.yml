@@ -89,3 +89,41 @@ jobs:
         files: dist/cyxmake-${{ github.event.inputs.tag }}-macos-arm64.tar.gz
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================================
+  # Windows Build
+  # ============================================================
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Configure CMake
+      run: cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCYXMAKE_BUILD_TESTS=OFF
+
+    - name: Build
+      run: cmake --build build --config ${{env.BUILD_TYPE}}
+
+    - name: Package
+      shell: pwsh
+      run: |
+        $tag = "${{ github.event.inputs.tag }}"
+        $distDir = "dist/cyxmake-$tag-windows-x64"
+        New-Item -ItemType Directory -Force -Path "$distDir/bin"
+        New-Item -ItemType Directory -Force -Path "$distDir/docs"
+        Copy-Item "build/bin/${{env.BUILD_TYPE}}/cyxmake.exe" "$distDir/bin/"
+        Get-ChildItem "build/bin/${{env.BUILD_TYPE}}/*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination "$distDir/bin/"
+        Copy-Item "README.md", "LICENSE", "CHANGELOG.md" "$distDir/" -ErrorAction SilentlyContinue
+        if (Test-Path "docs") { Copy-Item "docs/*" "$distDir/docs/" -Recurse -ErrorAction SilentlyContinue }
+        Compress-Archive -Path "$distDir" -DestinationPath "dist/cyxmake-$tag-windows-x64.zip"
+
+    - name: Upload to Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.event.inputs.tag }}
+        files: dist/cyxmake-${{ github.event.inputs.tag }}-windows-x64.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
