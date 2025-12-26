@@ -8,14 +8,17 @@
 #ifndef CYXMAKE_H
 #define CYXMAKE_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <time.h>
+
+/* Include logger for LogLevel definition */
+#include "cyxmake/logger.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* Version information */
 #define CYXMAKE_VERSION_MAJOR 1
@@ -48,18 +51,6 @@ typedef enum {
     CYXMAKE_ERROR_BUILD = 5,
     CYXMAKE_ERROR_INTERNAL = 99
 } CyxMakeError;
-
-/* Log levels - must match logger.h LogLevel enum */
-#ifndef CYXMAKE_LOGGER_H
-typedef enum {
-    LOG_LEVEL_DEBUG = 0,
-    LOG_LEVEL_INFO = 1,
-    LOG_LEVEL_SUCCESS = 2,
-    LOG_LEVEL_WARNING = 3,
-    LOG_LEVEL_ERROR = 4,
-    LOG_LEVEL_NONE = 5
-} LogLevel;
-#endif
 
 /* Main API */
 
