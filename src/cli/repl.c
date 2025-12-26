@@ -863,7 +863,7 @@ static bool execute_natural_language(ReplSession* session, const char* input) {
             }
             free(result);
         } else {
-            const char* error = agent_get_error(session->autonomous_agent);
+            const char* error = autonomous_agent_get_error(session->autonomous_agent);
             if (error) {
                 printf("%sAgent error: %s%s\n", COLOR_RED, error, COLOR_RESET);
             } else {
@@ -1362,7 +1362,7 @@ static bool execute_natural_language(ReplSession* session, const char* input) {
                         }
                         free(result);
                     } else {
-                        const char* error = agent_get_error(session->autonomous_agent);
+                        const char* error = autonomous_agent_get_error(session->autonomous_agent);
                         if (error) {
                             printf("%sAgent error: %s%s\n", COLOR_RED, error, COLOR_RESET);
                         } else {
