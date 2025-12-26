@@ -108,6 +108,15 @@ if(NOT WIN32)
     find_package(Threads REQUIRED)
     target_link_libraries(cyxmake_core PUBLIC Threads::Threads)
     message(STATUS "Threading support enabled (pthreads)")
+
+    # Link uuid library for agent ID generation
+    find_library(UUID_LIBRARY uuid)
+    if(UUID_LIBRARY)
+        target_link_libraries(cyxmake_core PUBLIC ${UUID_LIBRARY})
+        message(STATUS "UUID library found: ${UUID_LIBRARY}")
+    else()
+        message(WARNING "UUID library not found - agent ID generation may fail")
+    endif()
 endif()
 
 # Compiler warnings

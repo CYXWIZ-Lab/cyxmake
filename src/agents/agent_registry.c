@@ -1083,6 +1083,10 @@ const char* agent_get_error_msg(AgentInstance* agent) {
     return agent ? agent->last_error : NULL;
 }
 
+const char* agent_get_error(AgentInstance* agent) {
+    return agent ? agent->last_error : NULL;
+}
+
 /* ============================================================================
  * Agent Spawning (Parent/Child)
  * ============================================================================ */
