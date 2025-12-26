@@ -7,9 +7,19 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
-[![Version](https://img.shields.io/badge/version-0.2.0--beta-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/CYXWIZ-Lab/cyxmake/releases/tag/v1.0.0)
 [![Sponsor](https://img.shields.io/badge/sponsor-GitHub%20Sponsors-ea4aaa.svg)](https://github.com/sponsors/cyxwiz-lab)
 [![Support on Patreon](https://img.shields.io/badge/support-Patreon-orange.svg)](https://www.patreon.com/posts/cyxwiz-projects-146571889)
+
+## Download
+
+| Platform | Download | Size |
+|----------|----------|------|
+| **Windows x64** | [cyxmake-v1.0.0-windows-x64.zip](https://github.com/CYXWIZ-Lab/cyxmake/releases/download/v1.0.0/cyxmake-v1.0.0-windows-x64.zip) | ~1.4 MB |
+| **Linux x64** | [cyxmake-v1.0.0-linux-x64.tar.gz](https://github.com/CYXWIZ-Lab/cyxmake/releases/download/v1.0.0/cyxmake-v1.0.0-linux-x64.tar.gz) | ~1.2 MB |
+| **macOS ARM64** | [cyxmake-v1.0.0-macos-arm64.tar.gz](https://github.com/CYXWIZ-Lab/cyxmake/releases/download/v1.0.0/cyxmake-v1.0.0-macos-arm64.tar.gz) | ~1.1 MB |
+
+[View all releases](https://github.com/CYXWIZ-Lab/cyxmake/releases)
 
 ---
 
@@ -615,7 +625,7 @@ cyxmake> @ai fix the errors     # Ask AI for help
 
 ## Project Status
 
-**Current Phase**: Beta (v0.2.0)
+**Current Version**: v1.0.0 (Stable)
 
 ### Implemented
 
