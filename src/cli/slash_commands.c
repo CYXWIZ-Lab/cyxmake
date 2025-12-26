@@ -23,6 +23,7 @@
 #include "cyxmake/agent_coordinator.h"
 #include "cyxmake/agent_comm.h"
 #include "cyxmake/task_queue.h"
+#include "cyxmake/distributed/distributed.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -96,6 +97,10 @@ static const SlashCommand slash_commands[] = {
     {"fix",     NULL,   "Attempt to fix last error",    cmd_recover},
     {"create",  NULL,   "Create project from description", cmd_create},
     {"agent",   "a",    "Manage named agents",              cmd_agent},
+    /* Distributed build commands */
+    {"coordinator", "coord", "Manage distributed build coordinator", cmd_coordinator},
+    {"workers",     "dw",    "List and manage remote workers",       cmd_workers},
+    {"dbuild",      "db",    "Build using distributed workers",      cmd_dbuild},
     {NULL, NULL, NULL, NULL}
 };
 
@@ -3783,6 +3788,601 @@ bool cmd_agent(ReplSession* session, const char* args) {
         } else {
             printf("%s Unknown subcommand: %s\n", SYM_CROSS, args);
             printf("Use '/agent' for help\n");
+        }
+    }
+
+    return true;
+}
+
+/* ============================================================
+ * Distributed Build Commands
+ * ============================================================ */
+
+/* Global coordinator instance for the session */
+static Coordinator* g_coordinator = NULL;
+
+bool cmd_coordinator(ReplSession* session, const char* args) {
+    bool colors = session->config.colors_enabled;
+
+    if (!args || *args == '\0') {
+        /* Show help */
+        if (colors) {
+            printf("\n%s%s=== Coordinator Management ===%s\n\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
+            printf("%sUsage:%s /coordinator <command> [options]\n\n", COLOR_BOLD, COLOR_RESET);
+            printf("%sCommands:%s\n", COLOR_BOLD, COLOR_RESET);
+            printf("  %sstart%s [--port PORT]  Start the coordinator server\n", COLOR_GREEN, COLOR_RESET);
+            printf("  %sstop%s                 Stop the coordinator\n", COLOR_GREEN, COLOR_RESET);
+            printf("  %sstatus%s               Show coordinator status\n", COLOR_GREEN, COLOR_RESET);
+            printf("  %stoken%s                Generate a worker auth token\n", COLOR_GREEN, COLOR_RESET);
+            printf("\n%sExamples:%s\n", COLOR_BOLD, COLOR_RESET);
+            printf("  /coordinator start --port 9876\n");
+            printf("  /coord status\n\n");
+        } else {
+            printf("\n=== Coordinator Management ===\n\n");
+            printf("Usage: /coordinator <command> [options]\n\n");
+            printf("Commands:\n");
+            printf("  start [--port PORT]  Start the coordinator server\n");
+            printf("  stop                 Stop the coordinator\n");
+            printf("  status               Show coordinator status\n");
+            printf("  token                Generate a worker auth token\n\n");
+        }
+        return true;
+    }
+
+    /* Parse subcommand */
+    char subcmd[64] = {0};
+    const char* subcmd_args = NULL;
+
+    const char* space = strchr(args, ' ');
+    if (space) {
+        size_t len = (size_t)(space - args);
+        if (len >= sizeof(subcmd)) len = sizeof(subcmd) - 1;
+        strncpy(subcmd, args, len);
+        subcmd_args = space + 1;
+        while (*subcmd_args == ' ') subcmd_args++;
+    } else {
+        strncpy(subcmd, args, sizeof(subcmd) - 1);
+    }
+
+    if (strcmp(subcmd, "start") == 0) {
+        /* Start coordinator */
+        if (g_coordinator && coordinator_is_running(g_coordinator)) {
+            if (colors) {
+                printf("%s%s Coordinator already running%s\n", COLOR_YELLOW, SYM_WARN, COLOR_RESET);
+            } else {
+                printf("%s Coordinator already running\n", SYM_WARN);
+            }
+            return true;
+        }
+
+        /* Parse port option */
+        uint16_t port = 9876;
+        if (subcmd_args && strstr(subcmd_args, "--port")) {
+            const char* port_str = strstr(subcmd_args, "--port");
+            port_str += 6;
+            while (*port_str == ' ') port_str++;
+            port = (uint16_t)atoi(port_str);
+            if (port == 0) port = 9876;
+        }
+
+        if (colors) {
+            printf("%s%s Starting coordinator on port %d...%s\n", COLOR_BLUE, SYM_BULLET, port, COLOR_RESET);
+        } else {
+            printf("%s Starting coordinator on port %d...\n", SYM_BULLET, port);
+        }
+
+        /* Create coordinator config */
+        DistributedCoordinatorConfig config = distributed_coordinator_config_default();
+        config.port = port;
+        config.max_workers = 64;
+        config.max_concurrent_builds = 16;
+        config.enable_cache = true;
+
+        /* Create and start coordinator */
+        if (g_coordinator) {
+            distributed_coordinator_free(g_coordinator);
+        }
+        g_coordinator = distributed_coordinator_create(&config);
+
+        if (!g_coordinator) {
+            if (colors) {
+                printf("%s%s Failed to create coordinator%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Failed to create coordinator\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        if (!coordinator_start(g_coordinator)) {
+            if (colors) {
+                printf("%s%s Failed to start coordinator%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Failed to start coordinator\n", SYM_CROSS);
+            }
+            distributed_coordinator_free(g_coordinator);
+            g_coordinator = NULL;
+            return true;
+        }
+
+        if (colors) {
+            printf("%s%s Coordinator started on port %d%s\n", COLOR_GREEN, SYM_CHECK, port, COLOR_RESET);
+            printf("%s  Workers can connect to: ws://localhost:%d%s\n", COLOR_DIM, port, COLOR_RESET);
+        } else {
+            printf("%s Coordinator started on port %d\n", SYM_CHECK, port);
+            printf("  Workers can connect to: ws://localhost:%d\n", port);
+        }
+    }
+    else if (strcmp(subcmd, "stop") == 0) {
+        /* Stop coordinator */
+        if (!g_coordinator || !coordinator_is_running(g_coordinator)) {
+            if (colors) {
+                printf("%s%s Coordinator not running%s\n", COLOR_YELLOW, SYM_WARN, COLOR_RESET);
+            } else {
+                printf("%s Coordinator not running\n", SYM_WARN);
+            }
+            return true;
+        }
+
+        if (colors) {
+            printf("%s%s Stopping coordinator...%s\n", COLOR_BLUE, SYM_BULLET, COLOR_RESET);
+        } else {
+            printf("%s Stopping coordinator...\n", SYM_BULLET);
+        }
+
+        coordinator_stop(g_coordinator);
+        distributed_coordinator_free(g_coordinator);
+        g_coordinator = NULL;
+
+        if (colors) {
+            printf("%s%s Coordinator stopped%s\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET);
+        } else {
+            printf("%s Coordinator stopped\n", SYM_CHECK);
+        }
+    }
+    else if (strcmp(subcmd, "status") == 0) {
+        /* Show coordinator status */
+        if (!g_coordinator) {
+            if (colors) {
+                printf("%s%s Coordinator not initialized%s\n", COLOR_YELLOW, SYM_WARN, COLOR_RESET);
+            } else {
+                printf("%s Coordinator not initialized\n", SYM_WARN);
+            }
+            return true;
+        }
+
+        CoordinatorStatus status = coordinator_get_status(g_coordinator);
+
+        if (colors) {
+            printf("\n%s%s=== Coordinator Status ===%s\n\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
+            printf("  %sRunning:%s      %s%s%s\n", COLOR_BOLD, COLOR_RESET,
+                   status.running ? COLOR_GREEN : COLOR_RED,
+                   status.running ? "Yes" : "No", COLOR_RESET);
+            printf("  %sWorkers:%s      %d connected, %d online\n", COLOR_BOLD, COLOR_RESET,
+                   status.connected_workers, status.online_workers);
+            printf("  %sBuilds:%s       %d active\n", COLOR_BOLD, COLOR_RESET, status.active_builds);
+            printf("  %sJobs:%s         %d pending, %d running\n", COLOR_BOLD, COLOR_RESET,
+                   status.pending_jobs, status.running_jobs);
+            printf("  %sCache:%s        %.1f MB (%.1f%% hit rate)\n", COLOR_BOLD, COLOR_RESET,
+                   (double)status.cache_size / (1024 * 1024), status.cache_hit_rate * 100);
+            printf("  %sUptime:%s       %ld seconds\n\n", COLOR_BOLD, COLOR_RESET, (long)status.uptime_sec);
+        } else {
+            printf("\n=== Coordinator Status ===\n\n");
+            printf("  Running:      %s\n", status.running ? "Yes" : "No");
+            printf("  Workers:      %d connected, %d online\n", status.connected_workers, status.online_workers);
+            printf("  Builds:       %d active\n", status.active_builds);
+            printf("  Jobs:         %d pending, %d running\n", status.pending_jobs, status.running_jobs);
+            printf("  Cache:        %.1f MB (%.1f%% hit rate)\n",
+                   (double)status.cache_size / (1024 * 1024), status.cache_hit_rate * 100);
+            printf("  Uptime:       %ld seconds\n\n", (long)status.uptime_sec);
+        }
+    }
+    else if (strcmp(subcmd, "token") == 0) {
+        /* Generate auth token */
+        if (!g_coordinator) {
+            if (colors) {
+                printf("%s%s Coordinator not running. Start it first with '/coordinator start'%s\n",
+                       COLOR_YELLOW, SYM_WARN, COLOR_RESET);
+            } else {
+                printf("%s Coordinator not running. Start it first with '/coordinator start'\n", SYM_WARN);
+            }
+            return true;
+        }
+
+        char* token = coordinator_generate_worker_token(g_coordinator, "cli-worker", 86400);
+        if (token) {
+            if (colors) {
+                printf("\n%s%s Worker Token Generated%s\n\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET);
+                printf("  %sToken:%s %s\n", COLOR_BOLD, COLOR_RESET, token);
+                printf("  %sExpires:%s in 24 hours\n\n", COLOR_BOLD, COLOR_RESET);
+                printf("%sUse this token when starting a worker:%s\n", COLOR_DIM, COLOR_RESET);
+                printf("  cyxmake worker start --token %s\n\n", token);
+            } else {
+                printf("\n%s Worker Token Generated\n\n", SYM_CHECK);
+                printf("  Token: %s\n", token);
+                printf("  Expires: in 24 hours\n\n");
+                printf("Use this token when starting a worker:\n");
+                printf("  cyxmake worker start --token %s\n\n", token);
+            }
+            free(token);
+        } else {
+            if (colors) {
+                printf("%s%s Failed to generate token%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Failed to generate token\n", SYM_CROSS);
+            }
+        }
+    }
+    else {
+        if (colors) {
+            printf("%s%s Unknown subcommand: %s%s\n", COLOR_RED, SYM_CROSS, subcmd, COLOR_RESET);
+            printf("%sUse '/coordinator' for help%s\n", COLOR_DIM, COLOR_RESET);
+        } else {
+            printf("%s Unknown subcommand: %s\n", SYM_CROSS, subcmd);
+            printf("Use '/coordinator' for help\n");
+        }
+    }
+
+    return true;
+}
+
+/* Worker list print callback context */
+typedef struct {
+    bool colors;
+} WorkerPrintContext;
+
+static void print_worker_info(RemoteWorker* w, void* data) {
+    WorkerPrintContext* ctx = (WorkerPrintContext*)data;
+    const char* state_color = "";
+    if (ctx->colors) {
+        switch (w->state) {
+            case WORKER_STATE_ONLINE: state_color = COLOR_GREEN; break;
+            case WORKER_STATE_BUSY: state_color = COLOR_YELLOW; break;
+            case WORKER_STATE_OFFLINE: state_color = COLOR_RED; break;
+            default: state_color = COLOR_DIM; break;
+        }
+    }
+
+    char jobs_str[16];
+    snprintf(jobs_str, sizeof(jobs_str), "%d/%d", w->active_jobs, w->max_jobs);
+
+    char cpu_str[16];
+    snprintf(cpu_str, sizeof(cpu_str), "%.0f%%", w->cpu_usage * 100);
+
+    char health_str[16];
+    snprintf(health_str, sizeof(health_str), "%.0f%%", w->health_score * 100);
+
+    if (ctx->colors) {
+        printf("  %-20s %s%-12s%s %-8s %-10s %-8s\n",
+               w->name ? w->name : w->id,
+               state_color, worker_state_name(w->state), COLOR_RESET,
+               jobs_str, cpu_str, health_str);
+    } else {
+        printf("  %-20s %-12s %-8s %-10s %-8s\n",
+               w->name ? w->name : w->id,
+               worker_state_name(w->state),
+               jobs_str, cpu_str, health_str);
+    }
+}
+
+bool cmd_workers(ReplSession* session, const char* args) {
+    bool colors = session->config.colors_enabled;
+
+    if (!args || *args == '\0' || strcmp(args, "list") == 0) {
+        /* List all workers */
+        if (!g_coordinator) {
+            if (colors) {
+                printf("%s%s Coordinator not running. Start it with '/coordinator start'%s\n",
+                       COLOR_YELLOW, SYM_WARN, COLOR_RESET);
+            } else {
+                printf("%s Coordinator not running. Start it with '/coordinator start'\n", SYM_WARN);
+            }
+            return true;
+        }
+
+        WorkerRegistry* registry = coordinator_get_registry(g_coordinator);
+        if (!registry) {
+            if (colors) {
+                printf("%s%s Worker registry not available%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+            } else {
+                printf("%s Worker registry not available\n", SYM_CROSS);
+            }
+            return true;
+        }
+
+        int total = worker_registry_get_count(registry);
+        int online = worker_registry_get_online_count(registry);
+        int slots = worker_registry_get_available_slots(registry);
+
+        if (colors) {
+            printf("\n%s%s=== Remote Workers ===%s\n\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
+            printf("  %sTotal:%s %d workers, %d online, %d job slots available\n\n",
+                   COLOR_BOLD, COLOR_RESET, total, online, slots);
+        } else {
+            printf("\n=== Remote Workers ===\n\n");
+            printf("  Total: %d workers, %d online, %d job slots available\n\n", total, online, slots);
+        }
+
+        if (total == 0) {
+            if (colors) {
+                printf("  %sNo workers registered%s\n\n", COLOR_DIM, COLOR_RESET);
+                printf("  %sTo add a worker, run on the worker machine:%s\n", COLOR_DIM, COLOR_RESET);
+                printf("    cyxmake worker start --coordinator <host>:9876\n\n");
+            } else {
+                printf("  No workers registered\n\n");
+                printf("  To add a worker, run on the worker machine:\n");
+                printf("    cyxmake worker start --coordinator <host>:9876\n\n");
+            }
+            return true;
+        }
+
+        /* Print header */
+        if (colors) {
+            printf("  %s%-20s %-12s %-8s %-10s %-8s%s\n",
+                   COLOR_BOLD, "NAME", "STATE", "JOBS", "CPU", "HEALTH", COLOR_RESET);
+            printf("  %s────────────────────────────────────────────────────────────%s\n", COLOR_DIM, COLOR_RESET);
+        } else {
+            printf("  %-20s %-12s %-8s %-10s %-8s\n", "NAME", "STATE", "JOBS", "CPU", "HEALTH");
+            printf("  ────────────────────────────────────────────────────────────\n");
+        }
+
+        /* Iterate and print workers */
+        WorkerPrintContext ctx = { colors };
+        worker_registry_foreach(registry, print_worker_info, &ctx);
+
+        printf("\n");
+        return true;
+    }
+
+    /* Parse subcommand */
+    char subcmd[64] = {0};
+    const char* space = strchr(args, ' ');
+    if (space) {
+        size_t len = (size_t)(space - args);
+        if (len >= sizeof(subcmd)) len = sizeof(subcmd) - 1;
+        strncpy(subcmd, args, len);
+    } else {
+        strncpy(subcmd, args, sizeof(subcmd) - 1);
+    }
+
+    if (strcmp(subcmd, "help") == 0) {
+        if (colors) {
+            printf("\n%s%s=== Worker Management ===%s\n\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
+            printf("%sUsage:%s /workers <command>\n\n", COLOR_BOLD, COLOR_RESET);
+            printf("%sCommands:%s\n", COLOR_BOLD, COLOR_RESET);
+            printf("  %slist%s            List all registered workers (default)\n", COLOR_GREEN, COLOR_RESET);
+            printf("  %sstats%s           Show detailed worker statistics\n", COLOR_GREEN, COLOR_RESET);
+            printf("  %sremove <name>%s   Remove a worker from registry\n", COLOR_GREEN, COLOR_RESET);
+            printf("\n");
+        } else {
+            printf("\n=== Worker Management ===\n\n");
+            printf("Usage: /workers <command>\n\n");
+            printf("Commands:\n");
+            printf("  list            List all registered workers (default)\n");
+            printf("  stats           Show detailed worker statistics\n");
+            printf("  remove <name>   Remove a worker from registry\n\n");
+        }
+    }
+    else if (strcmp(subcmd, "stats") == 0) {
+        if (!g_coordinator) {
+            if (colors) {
+                printf("%s%s Coordinator not running%s\n", COLOR_YELLOW, SYM_WARN, COLOR_RESET);
+            } else {
+                printf("%s Coordinator not running\n", SYM_WARN);
+            }
+            return true;
+        }
+
+        WorkerRegistry* registry = coordinator_get_registry(g_coordinator);
+        int slots = worker_registry_get_available_slots(registry);
+        int online = worker_registry_get_online_count(registry);
+
+        if (colors) {
+            printf("\n%s%s=== Worker Statistics ===%s\n\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
+            printf("  %sOnline Workers:%s    %d\n", COLOR_BOLD, COLOR_RESET, online);
+            printf("  %sAvailable Slots:%s   %d\n", COLOR_BOLD, COLOR_RESET, slots);
+            printf("\n");
+        } else {
+            printf("\n=== Worker Statistics ===\n\n");
+            printf("  Online Workers:    %d\n", online);
+            printf("  Available Slots:   %d\n\n", slots);
+        }
+    }
+    else {
+        if (colors) {
+            printf("%s%s Unknown subcommand: %s%s\n", COLOR_RED, SYM_CROSS, subcmd, COLOR_RESET);
+            printf("%sUse '/workers help' for usage%s\n", COLOR_DIM, COLOR_RESET);
+        } else {
+            printf("%s Unknown subcommand: %s\n", SYM_CROSS, subcmd);
+            printf("Use '/workers help' for usage\n");
+        }
+    }
+
+    return true;
+}
+
+bool cmd_dbuild(ReplSession* session, const char* args) {
+    bool colors = session->config.colors_enabled;
+
+    if (args && strcmp(args, "help") == 0) {
+        args = NULL;  /* Show help */
+    }
+
+    if (!args || *args == '\0') {
+        /* Show help */
+        if (colors) {
+            printf("\n%s%s=== Distributed Build ===%s\n\n", COLOR_BOLD, COLOR_CYAN, COLOR_RESET);
+            printf("%sUsage:%s /dbuild [options]\n\n", COLOR_BOLD, COLOR_RESET);
+            printf("%sOptions:%s\n", COLOR_BOLD, COLOR_RESET);
+            printf("  %s--strategy <name>%s   Distribution strategy:\n", COLOR_GREEN, COLOR_RESET);
+            printf("                       compile-units  Distribute source files\n");
+            printf("                       targets        Distribute build targets\n");
+            printf("                       whole-project  Build on single worker\n");
+            printf("                       hybrid         Auto-select (default)\n");
+            printf("  %s--jobs <N>%s          Maximum parallel jobs\n", COLOR_GREEN, COLOR_RESET);
+            printf("  %s--verbose%s           Show detailed progress\n", COLOR_GREEN, COLOR_RESET);
+            printf("\n%sExamples:%s\n", COLOR_BOLD, COLOR_RESET);
+            printf("  /dbuild --strategy compile-units\n");
+            printf("  /db --jobs 16 --verbose\n\n");
+        } else {
+            printf("\n=== Distributed Build ===\n\n");
+            printf("Usage: /dbuild [options]\n\n");
+            printf("Options:\n");
+            printf("  --strategy <name>   Distribution strategy\n");
+            printf("  --jobs <N>          Maximum parallel jobs\n");
+            printf("  --verbose           Show detailed progress\n\n");
+        }
+        return true;
+    }
+
+    /* Check coordinator is running */
+    if (!g_coordinator || !coordinator_is_running(g_coordinator)) {
+        if (colors) {
+            printf("%s%s Coordinator not running%s\n", COLOR_YELLOW, SYM_WARN, COLOR_RESET);
+            printf("%sStart the coordinator first with '/coordinator start'%s\n", COLOR_DIM, COLOR_RESET);
+        } else {
+            printf("%s Coordinator not running\n", SYM_WARN);
+            printf("Start the coordinator first with '/coordinator start'\n");
+        }
+        return true;
+    }
+
+    /* Check for workers */
+    WorkerRegistry* registry = coordinator_get_registry(g_coordinator);
+    int online = worker_registry_get_online_count(registry);
+    if (online == 0) {
+        if (colors) {
+            printf("%s%s No workers online%s\n", COLOR_YELLOW, SYM_WARN, COLOR_RESET);
+            printf("%sRegister workers first. See '/workers help'%s\n", COLOR_DIM, COLOR_RESET);
+        } else {
+            printf("%s No workers online\n", SYM_WARN);
+            printf("Register workers first. See '/workers help'\n");
+        }
+        return true;
+    }
+
+    /* Parse options */
+    DistributionStrategy strategy = DIST_STRATEGY_HYBRID;
+    int max_jobs = 0;
+    bool verbose = false;
+
+    if (strstr(args, "--strategy")) {
+        if (strstr(args, "compile-units")) {
+            strategy = DIST_STRATEGY_COMPILE_UNITS;
+        } else if (strstr(args, "targets")) {
+            strategy = DIST_STRATEGY_TARGETS;
+        } else if (strstr(args, "whole-project")) {
+            strategy = DIST_STRATEGY_WHOLE_PROJECT;
+        }
+    }
+
+    const char* jobs_str = strstr(args, "--jobs");
+    if (jobs_str) {
+        jobs_str += 6;
+        while (*jobs_str == ' ') jobs_str++;
+        max_jobs = atoi(jobs_str);
+    }
+
+    if (strstr(args, "--verbose") || strstr(args, "-v")) {
+        verbose = true;
+    }
+
+    /* Create build options */
+    DistributedBuildOptions opts = distributed_build_options_default();
+    opts.strategy = strategy;
+    opts.max_parallel_jobs = max_jobs > 0 ? max_jobs : worker_registry_get_available_slots(registry);
+    opts.verbose = verbose;
+
+    const char* strategy_name = "hybrid";
+    switch (strategy) {
+        case DIST_STRATEGY_COMPILE_UNITS: strategy_name = "compile-units"; break;
+        case DIST_STRATEGY_TARGETS: strategy_name = "targets"; break;
+        case DIST_STRATEGY_WHOLE_PROJECT: strategy_name = "whole-project"; break;
+        default: break;
+    }
+
+    if (colors) {
+        printf("\n%s%s Starting distributed build%s\n", COLOR_BLUE, SYM_BULLET, COLOR_RESET);
+        printf("  %sStrategy:%s    %s\n", COLOR_BOLD, COLOR_RESET, strategy_name);
+        printf("  %sMax Jobs:%s    %d\n", COLOR_BOLD, COLOR_RESET, opts.max_parallel_jobs);
+        printf("  %sWorkers:%s     %d online\n\n", COLOR_BOLD, COLOR_RESET, online);
+    } else {
+        printf("\n%s Starting distributed build\n", SYM_BULLET);
+        printf("  Strategy:    %s\n", strategy_name);
+        printf("  Max Jobs:    %d\n", opts.max_parallel_jobs);
+        printf("  Workers:     %d online\n\n", online);
+    }
+
+    /* Submit build */
+    BuildSession* build_session = coordinator_submit_build(g_coordinator, ".", &opts);
+    if (!build_session) {
+        if (colors) {
+            printf("%s%s Failed to submit distributed build%s\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+        } else {
+            printf("%s Failed to submit distributed build\n", SYM_CROSS);
+        }
+        return true;
+    }
+
+    if (colors) {
+        printf("%s%s Build submitted: %s%s%s\n", COLOR_GREEN, SYM_CHECK, COLOR_CYAN, build_session->build_id, COLOR_RESET);
+    } else {
+        printf("%s Build submitted: %s\n", SYM_CHECK, build_session->build_id);
+    }
+
+    /* Wait for completion with progress */
+    if (colors) {
+        printf("%s%s Waiting for build to complete...%s\n", COLOR_BLUE, SYM_BULLET, COLOR_RESET);
+    } else {
+        printf("%s Waiting for build to complete...\n", SYM_BULLET);
+    }
+
+    bool success = coordinator_wait_build(g_coordinator, build_session->build_id, 3600);
+    DistributedBuildResult* result = coordinator_get_build_result(g_coordinator, build_session->build_id);
+
+    if (result) {
+        if (result->success) {
+            if (colors) {
+                printf("\n%s%s Build successful!%s\n\n", COLOR_GREEN, SYM_CHECK, COLOR_RESET);
+                printf("  %sDuration:%s     %.2f seconds\n", COLOR_BOLD, COLOR_RESET, result->duration_sec);
+                printf("  %sJobs:%s         %d completed\n", COLOR_BOLD, COLOR_RESET, result->jobs_completed);
+                if (result->cache_hits > 0) {
+                    printf("  %sCache Hits:%s   %d\n", COLOR_BOLD, COLOR_RESET, result->cache_hits);
+                }
+                printf("\n");
+            } else {
+                printf("\n%s Build successful!\n\n", SYM_CHECK);
+                printf("  Duration:     %.2f seconds\n", result->duration_sec);
+                printf("  Jobs:         %d completed\n", result->jobs_completed);
+                printf("\n");
+            }
+        } else {
+            if (colors) {
+                printf("\n%s%s Build failed%s\n\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+                if (result->error_message) {
+                    printf("  %sError:%s %s\n\n", COLOR_BOLD, COLOR_RESET, result->error_message);
+                }
+            } else {
+                printf("\n%s Build failed\n\n", SYM_CROSS);
+                if (result->error_message) {
+                    printf("  Error: %s\n\n", result->error_message);
+                }
+            }
+
+            /* Store error for recovery */
+            if (session->last_error) {
+                free(session->last_error);
+                session->last_error = NULL;
+            }
+            if (result->error_message) {
+                session->last_error = strdup(result->error_message);
+            }
+        }
+        distributed_build_result_free(result);
+    } else if (!success) {
+        if (colors) {
+            printf("\n%s%s Build timed out or failed%s\n\n", COLOR_RED, SYM_CROSS, COLOR_RESET);
+        } else {
+            printf("\n%s Build timed out or failed\n\n", SYM_CROSS);
         }
     }
 

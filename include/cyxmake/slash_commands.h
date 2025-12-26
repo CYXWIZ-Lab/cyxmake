@@ -76,6 +76,11 @@ bool cmd_recover(ReplSession* session, const char* args);
 bool cmd_create(ReplSession* session, const char* args);
 bool cmd_agent(ReplSession* session, const char* args);
 
+/* Distributed build commands */
+bool cmd_coordinator(ReplSession* session, const char* args);
+bool cmd_workers(ReplSession* session, const char* args);
+bool cmd_dbuild(ReplSession* session, const char* args);
+
 #ifdef __cplusplus
 }
 #endif

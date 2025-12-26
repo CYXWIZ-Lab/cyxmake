@@ -132,6 +132,46 @@ if(CYXMAKE_USE_SANITIZERS AND NOT MSVC)
     target_link_options(cyxmake_core PRIVATE -fsanitize=address,undefined)
 endif()
 
+# Distributed build support
+# Always include distributed sources - they have stub implementations when disabled
+target_sources(cyxmake_core PRIVATE
+    distributed/protocol_codec.c
+    distributed/network_common.c
+    distributed/network_server.c
+    distributed/network_client.c
+    distributed/worker_registry.c
+    distributed/auth.c
+    distributed/work_scheduler.c
+    distributed/artifact_cache.c
+    distributed/coordinator.c
+)
+
+if(CYXMAKE_ENABLE_DISTRIBUTED)
+    # Add include directories
+    target_include_directories(cyxmake_core PUBLIC
+        ${LIBWEBSOCKETS_INCLUDE_DIRS}
+    )
+
+    # Link libwebsockets
+    target_link_libraries(cyxmake_core PUBLIC
+        ${LIBWEBSOCKETS_LIBRARIES}
+    )
+
+    # Link OpenSSL if available
+    if(OPENSSL_FOUND)
+        target_link_libraries(cyxmake_core PUBLIC
+            OpenSSL::SSL
+            OpenSSL::Crypto
+        )
+        target_compile_definitions(cyxmake_core PUBLIC CYXMAKE_HAVE_OPENSSL)
+    endif()
+
+    target_compile_definitions(cyxmake_core PUBLIC CYXMAKE_ENABLE_DISTRIBUTED)
+    message(STATUS "Distributed build support enabled (with libwebsockets)")
+else()
+    message(STATUS "Distributed build support disabled (stub implementations)")
+endif()
+
 # CLI sources (REPL, slash commands, permissions, context, input, planner)
 set(CYXMAKE_CLI_SOURCES
     cli/main.c

@@ -22,6 +22,7 @@ option(CYXMAKE_BUILD_TOOLS "Build bundled tools" ON)
 option(CYXMAKE_USE_SANITIZERS "Enable address sanitizer" OFF)
 option(CYXMAKE_STATIC_LINK "Static linking" OFF)
 option(CYXMAKE_REQUIRE_CURL "Require CURL for cloud AI providers (fail if not found)" OFF)
+option(CYXMAKE_ENABLE_DISTRIBUTED "Enable distributed build support" OFF)
 
 # GPU acceleration options (passed to llama.cpp/ggml)
 option(CYXMAKE_GPU_CUDA "Enable CUDA GPU acceleration (NVIDIA)" OFF)
@@ -105,6 +106,56 @@ else()
     endif()
 endif()
 
+# Find libwebsockets for distributed builds
+if(CYXMAKE_ENABLE_DISTRIBUTED)
+    find_package(PkgConfig QUIET)
+    if(PKG_CONFIG_FOUND)
+        pkg_check_modules(LIBWEBSOCKETS libwebsockets)
+    endif()
+
+    if(NOT LIBWEBSOCKETS_FOUND)
+        # Try manual search
+        find_path(LIBWEBSOCKETS_INCLUDE_DIR libwebsockets.h
+            PATHS /usr/include /usr/local/include /opt/local/include
+        )
+        find_library(LIBWEBSOCKETS_LIBRARY websockets
+            PATHS /usr/lib /usr/local/lib /opt/local/lib
+        )
+        if(LIBWEBSOCKETS_INCLUDE_DIR AND LIBWEBSOCKETS_LIBRARY)
+            set(LIBWEBSOCKETS_FOUND TRUE)
+            set(LIBWEBSOCKETS_INCLUDE_DIRS ${LIBWEBSOCKETS_INCLUDE_DIR})
+            set(LIBWEBSOCKETS_LIBRARIES ${LIBWEBSOCKETS_LIBRARY})
+        endif()
+    endif()
+
+    if(LIBWEBSOCKETS_FOUND)
+        message(STATUS "Found libwebsockets: ${LIBWEBSOCKETS_LIBRARIES}")
+        set(HAVE_LIBWEBSOCKETS TRUE)
+    else()
+        message(WARNING
+            "libwebsockets not found - distributed builds will be disabled.\n"
+            "To enable distributed builds, install libwebsockets:\n"
+            "  - Windows: vcpkg install libwebsockets:x64-windows\n"
+            "  - macOS:   brew install libwebsockets\n"
+            "  - Ubuntu:  sudo apt install libwebsockets-dev\n"
+            "  - Fedora:  sudo dnf install libwebsockets-devel")
+        set(HAVE_LIBWEBSOCKETS FALSE)
+        set(CYXMAKE_ENABLE_DISTRIBUTED OFF)
+    endif()
+
+    # Find OpenSSL for TLS support
+    if(CYXMAKE_ENABLE_DISTRIBUTED)
+        find_package(OpenSSL QUIET)
+        if(OPENSSL_FOUND)
+            message(STATUS "Found OpenSSL: ${OPENSSL_VERSION}")
+            set(HAVE_OPENSSL TRUE)
+        else()
+            message(WARNING "OpenSSL not found - TLS support disabled for distributed builds")
+            set(HAVE_OPENSSL FALSE)
+        endif()
+    endif()
+endif()
+
 # Add external dependencies
 add_subdirectory(external)
 
@@ -160,5 +211,10 @@ message(STATUS "GPU OpenCL:       ${CYXMAKE_GPU_OPENCL}")
 message(STATUS "CURL (HTTP):      ${HAVE_CURL}")
 if(NOT HAVE_CURL)
     message(STATUS "  (Cloud AI providers disabled - install CURL to enable)")
+endif()
+message(STATUS "Distributed:      ${CYXMAKE_ENABLE_DISTRIBUTED}")
+if(CYXMAKE_ENABLE_DISTRIBUTED)
+    message(STATUS "  libwebsockets:  ${HAVE_LIBWEBSOCKETS}")
+    message(STATUS "  OpenSSL (TLS):  ${HAVE_OPENSSL}")
 endif()
 message(STATUS "")
