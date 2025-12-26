@@ -26,7 +26,7 @@ jobs:
     - name: Install Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake build-essential libcurl4-openssl-dev
+        sudo apt-get install -y cmake build-essential libcurl4-openssl-dev uuid-dev
 
     - name: Configure CMake
       run: cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCYXMAKE_BUILD_TESTS=OFF

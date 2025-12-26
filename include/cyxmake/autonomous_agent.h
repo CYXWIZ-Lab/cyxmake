@@ -139,8 +139,9 @@ void agent_set_working_dir(AutonomousAgent* agent, const char* path);
 
 /**
  * Get the last error message
+ * Note: Named autonomous_agent_get_error to avoid conflict with agent_registry.h
  */
-const char* agent_get_error(AutonomousAgent* agent);
+const char* autonomous_agent_get_error(AutonomousAgent* agent);
 
 /**
  * Clear conversation history (start fresh)

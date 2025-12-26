@@ -9,6 +9,7 @@
 #include "cyxmake/project_context.h"
 #include "cyxmake/conversation_context.h"
 #include "cyxmake/logger.h"
+#include "cyxmake/compat.h"
 #include "cJSON/cJSON.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -82,7 +83,7 @@ static const char* DECISION_SYSTEM_PROMPT =
  * ============================================================================ */
 
 static char* strdup_safe(const char* s) {
-    return s ? _strdup(s) : NULL;
+    return s ? strdup(s) : NULL;
 }
 
 /* Windows doesn't have strndup */

@@ -746,7 +746,7 @@ void agent_set_working_dir(AutonomousAgent* agent, const char* path) {
     agent->working_dir = strdup_safe(path);
 }
 
-const char* agent_get_error(AutonomousAgent* agent) {
+const char* autonomous_agent_get_error(AutonomousAgent* agent) {
     return agent ? agent->last_error : NULL;
 }
 
