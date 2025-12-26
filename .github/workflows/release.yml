@@ -1,0 +1,88 @@
+name: Release Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  # ============================================================
+  # Linux Build
+  # ============================================================
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential libcurl4-openssl-dev
+
+    - name: Configure CMake
+      run: cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCYXMAKE_BUILD_TESTS=OFF
+
+    - name: Build
+      run: cmake --build build --config ${{env.BUILD_TYPE}} -j$(nproc)
+
+    - name: Package
+      run: |
+        mkdir -p dist/cyxmake-${{ github.event.inputs.tag }}-linux-x64/bin
+        mkdir -p dist/cyxmake-${{ github.event.inputs.tag }}-linux-x64/docs
+        cp build/bin/cyxmake dist/cyxmake-${{ github.event.inputs.tag }}-linux-x64/bin/
+        cp build/bin/*.so* dist/cyxmake-${{ github.event.inputs.tag }}-linux-x64/bin/ 2>/dev/null || true
+        cp README.md LICENSE CHANGELOG.md dist/cyxmake-${{ github.event.inputs.tag }}-linux-x64/
+        cp -r docs/* dist/cyxmake-${{ github.event.inputs.tag }}-linux-x64/docs/ 2>/dev/null || true
+        cd dist && tar -czvf cyxmake-${{ github.event.inputs.tag }}-linux-x64.tar.gz cyxmake-${{ github.event.inputs.tag }}-linux-x64
+
+    - name: Upload to Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.event.inputs.tag }}
+        files: dist/cyxmake-${{ github.event.inputs.tag }}-linux-x64.tar.gz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================================
+  # macOS Build
+  # ============================================================
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Configure CMake
+      run: cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCYXMAKE_BUILD_TESTS=OFF
+
+    - name: Build
+      run: cmake --build build --config ${{env.BUILD_TYPE}} -j$(sysctl -n hw.ncpu)
+
+    - name: Package
+      run: |
+        mkdir -p dist/cyxmake-${{ github.event.inputs.tag }}-macos-arm64/bin
+        mkdir -p dist/cyxmake-${{ github.event.inputs.tag }}-macos-arm64/docs
+        cp build/bin/cyxmake dist/cyxmake-${{ github.event.inputs.tag }}-macos-arm64/bin/
+        cp build/bin/*.dylib dist/cyxmake-${{ github.event.inputs.tag }}-macos-arm64/bin/ 2>/dev/null || true
+        cp README.md LICENSE CHANGELOG.md dist/cyxmake-${{ github.event.inputs.tag }}-macos-arm64/
+        cp -r docs/* dist/cyxmake-${{ github.event.inputs.tag }}-macos-arm64/docs/ 2>/dev/null || true
+        cd dist && tar -czvf cyxmake-${{ github.event.inputs.tag }}-macos-arm64.tar.gz cyxmake-${{ github.event.inputs.tag }}-macos-arm64
+
+    - name: Upload to Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.event.inputs.tag }}
+        files: dist/cyxmake-${{ github.event.inputs.tag }}-macos-arm64.tar.gz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
