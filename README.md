@@ -355,6 +355,42 @@ cyxmake> /agent unlock builder CMakeLists.txt
 | `/agent conflicts` | List all conflicts |
 | `/agent resolve` | Interactively resolve next conflict |
 
+### Distributed Builds
+
+Scale your builds across multiple machines:
+
+```bash
+# Start a coordinator (on build server)
+cyxmake> /coordinator start --port 9876
+✓ Coordinator started on port 9876
+
+# Generate worker tokens
+cyxmake> /coordinator token
+✓ Worker token: abc123...
+
+# View connected workers
+cyxmake> /workers
+Connected Workers: 3
+  worker-01   x86_64-linux   online   4/8 jobs
+  worker-02   arm64-linux    online   2/4 jobs
+  worker-03   x64-windows    idle     0/8 jobs
+
+# Run distributed build
+cyxmake> /dbuild --strategy compile-units
+Distributing 47 compile units across 3 workers...
+[========================================] 100%
+Build completed in 45s (3.2x speedup)
+```
+
+**Distribution Strategies:**
+
+| Strategy | Description | Best For |
+|----------|-------------|----------|
+| `compile-units` | Distribute source files (distcc-style) | Large C/C++ projects |
+| `targets` | Distribute independent targets | Multi-target builds |
+| `whole-project` | Send entire project to worker | CI/CD, cross-compilation |
+| `hybrid` | Auto-select based on analysis | Default |
+
 ### Autonomous Error Recovery
 
 When builds fail, CyxMake:
@@ -408,6 +444,19 @@ brew install curl
 
 # Windows (vcpkg)
 vcpkg install curl:x64-windows
+```
+
+### Optional: Install libwebsockets for Distributed Builds
+
+```bash
+# Ubuntu/Debian
+sudo apt install libwebsockets-dev
+
+# macOS
+brew install libwebsockets
+
+# Build with distributed support
+cmake .. -DCYXMAKE_ENABLE_DISTRIBUTED=ON
 ```
 
 ---
@@ -595,6 +644,14 @@ cyxmake> @ai fix the errors     # Ask AI for help
 | `/agent set <name> <key> <val>` | - | Configure agent settings |
 | `/agent terminate <name>` | - | Stop an agent |
 | `/agent wait <name>` | - | Wait for agent completion |
+| `/coordinator` | - | Distributed build coordinator |
+| `/coordinator start` | - | Start coordinator server |
+| `/coordinator stop` | - | Stop coordinator |
+| `/coordinator status` | - | Show coordinator status |
+| `/coordinator token` | - | Generate worker auth token |
+| `/workers` | - | List connected workers |
+| `/dbuild` | - | Run distributed build |
+| `/dbuild --strategy <s>` | - | Use specific distribution strategy |
 | `/exit` | `/q` | Exit CyxMake |
 
 ### CLI Commands
@@ -636,6 +693,7 @@ cyxmake> @ai fix the errors     # Ask AI for help
 - [x] **AI Agent System** - LLM-powered action execution
 - [x] **AI Autonomous Build** - `cyxmake auto` for fully autonomous building
 - [x] **Multi-Agent System** - Named agents, parallel execution, task assignment
+- [x] **Distributed Builds** - Coordinator-worker architecture for build farms
 - [x] **Tool Discovery** - Auto-detects compilers, build tools, package managers
 - [x] **Tool Execution** - Safe command execution with output capture
 - [x] **Error Recovery** - Pattern matching + AI-powered diagnosis
