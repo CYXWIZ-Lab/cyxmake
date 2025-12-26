@@ -49,13 +49,17 @@ typedef enum {
     CYXMAKE_ERROR_INTERNAL = 99
 } CyxMakeError;
 
+/* Log levels - must match logger.h LogLevel enum */
+#ifndef CYXMAKE_LOGGER_H
 typedef enum {
-    LOG_TRACE,
-    LOG_DEBUG,
-    LOG_INFO,
-    LOG_WARN,
-    LOG_ERROR
+    LOG_LEVEL_DEBUG = 0,
+    LOG_LEVEL_INFO = 1,
+    LOG_LEVEL_SUCCESS = 2,
+    LOG_LEVEL_WARNING = 3,
+    LOG_LEVEL_ERROR = 4,
+    LOG_LEVEL_NONE = 5
 } LogLevel;
+#endif
 
 /* Main API */
 

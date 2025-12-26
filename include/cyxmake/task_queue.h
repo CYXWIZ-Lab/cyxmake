@@ -73,9 +73,10 @@ typedef enum {
  * ============================================================================ */
 
 /**
- * Completion callback function type
+ * Agent task completion callback function type
+ * Note: Named AgentTaskCallback to avoid conflict with threading.h TaskCallback
  */
-typedef void (*TaskCallback)(AgentTask* task, void* user_data);
+typedef void (*AgentTaskCallback)(AgentTask* task, void* user_data);
 
 /**
  * A task to be executed by an agent
@@ -116,9 +117,9 @@ typedef struct AgentTask {
     int timeout_sec;            /* 0 = no timeout */
 
     /* Callbacks */
-    TaskCallback on_complete;   /* Called when task completes */
-    TaskCallback on_error;      /* Called on error */
-    TaskCallback on_progress;   /* Called for progress updates */
+    AgentTaskCallback on_complete;   /* Called when task completes */
+    AgentTaskCallback on_error;      /* Called on error */
+    AgentTaskCallback on_progress;   /* Called for progress updates */
     void* callback_data;        /* User data for callbacks */
 
     /* Progress tracking */
@@ -204,7 +205,7 @@ bool task_add_dependency(AgentTask* task, const char* dependency_id);
  * @param callback Callback function
  * @param user_data User data passed to callback
  */
-void task_set_callback(AgentTask* task, TaskCallback callback, void* user_data);
+void task_set_callback(AgentTask* task, AgentTaskCallback callback, void* user_data);
 
 /**
  * Set task timeout

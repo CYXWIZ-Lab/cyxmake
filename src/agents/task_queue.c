@@ -176,7 +176,7 @@ bool task_add_dependency(AgentTask* task, const char* dependency_id) {
     return true;
 }
 
-void task_set_callback(AgentTask* task, TaskCallback callback, void* user_data) {
+void task_set_callback(AgentTask* task, AgentTaskCallback callback, void* user_data) {
     if (!task) return;
     task->on_complete = callback;
     task->callback_data = user_data;
