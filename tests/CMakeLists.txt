@@ -128,6 +128,25 @@ add_custom_command(TARGET test_fix_validation POST_BUILD
     COMMENT "Copying test_fix_validation to bin directory"
 )
 
+# Distributed Build System test executable
+add_executable(test_distributed test_distributed.c)
+target_link_libraries(test_distributed PRIVATE cyxmake_core)
+target_include_directories(test_distributed PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+set_target_properties(test_distributed PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin/tests
+)
+
+add_custom_command(TARGET test_distributed POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        $<TARGET_FILE:test_distributed>
+        ${CMAKE_BINARY_DIR}/bin/test_distributed${CMAKE_EXECUTABLE_SUFFIX}
+    COMMENT "Copying test_distributed to bin directory"
+)
+
 # Register tests with CTest
 add_test(NAME test_logger COMMAND test_logger)
 add_test(NAME test_error_recovery COMMAND test_error_recovery)
@@ -136,5 +155,6 @@ add_test(NAME test_ai_agent COMMAND test_ai_agent)
 add_test(NAME test_recovery_integration COMMAND test_recovery_integration)
 add_test(NAME test_security COMMAND test_security)
 add_test(NAME test_fix_validation COMMAND test_fix_validation)
+add_test(NAME test_distributed COMMAND test_distributed)
 
-message(STATUS "Tests configured: test_logger, test_error_recovery, test_tool_executor, test_ai_agent, test_recovery_integration, test_security, test_fix_validation")
+message(STATUS "Tests configured: test_logger, test_error_recovery, test_tool_executor, test_ai_agent, test_recovery_integration, test_security, test_fix_validation, test_distributed")
