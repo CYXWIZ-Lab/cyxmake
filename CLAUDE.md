@@ -36,11 +36,17 @@ ctest --output-on-failure
 ./bin/test_logger
 ./bin/test_error_recovery
 ./bin/test_tool_executor
+./bin/test_distributed
 
 # Tests available:
 # - test_logger: Logger functionality
 # - test_error_recovery: Error diagnosis and recovery system
 # - test_tool_executor: Tool discovery, registry, and execution
+# - test_ai_agent: AI agent system tests
+# - test_security: Security system tests
+# - test_fix_validation: Fix validation tests
+# - test_recovery_integration: Recovery integration tests
+# - test_distributed: Distributed build system (protocol, auth, coordinator, scheduler)
 ```
 
 ### CMake Build Options
@@ -292,7 +298,12 @@ log_success("Build completed in %.2fs", duration); // Success messages
 **Current Tests**:
 - `test_logger`: Validates all log levels, file output, colored output
 - `test_error_recovery`: Tests error diagnosis, pattern matching, solution generation
-- `test_tool_executor`: Tests tool discovery (found 11 tools on dev machine), registry, execution with git
+- `test_tool_executor`: Tests tool discovery, registry, execution with git
+- `test_ai_agent`: AI agent system tests
+- `test_security`: Security system validation
+- `test_fix_validation`: Fix validation tests
+- `test_recovery_integration`: Recovery integration tests
+- `test_distributed`: Distributed build system tests (45 tests covering protocol codec, authentication, coordinator config, build options, version/availability, strategy names)
 
 **Adding Tests**: Each new component should have a corresponding `test_<component>.c` file that asserts core functionality. Use the existing tests as templates.
 
