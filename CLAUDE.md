@@ -57,6 +57,7 @@ cmake .. \
 # CYXMAKE_BUILD_TOOLS (default: ON) - Build bundled tools
 # CYXMAKE_USE_SANITIZERS (default: OFF) - Enable address sanitizer
 # CYXMAKE_STATIC_LINK (default: OFF) - Static linking
+# CYXMAKE_ENABLE_DISTRIBUTED (default: OFF) - Enable distributed builds (requires libwebsockets)
 ```
 
 ### Using CyxMake Itself
@@ -134,6 +135,15 @@ CyxMake follows a **modular, tool-centric architecture** with clear separation o
 - `tool_discovery.c`: System scanning for compilers, build tools, package managers
 - `tool_executor.c`: Safe command execution with output capture
 
+**6. Distributed Build System** (`src/distributed/`)
+- `coordinator.c`: Central orchestration service for distributed builds
+- `worker_registry.c`: Worker discovery, registration, health monitoring
+- `work_scheduler.c`: Job distribution with multiple strategies
+- `network_server.c` / `network_client.c`: WebSocket transport layer
+- `protocol_codec.c`: JSON message serialization/deserialization
+- `auth.c`: Token-based authentication with expiration
+- `artifact_cache.c`: Content-addressed caching with LRU eviction
+
 **Critical Design Pattern**: The tool system uses a **registry pattern** where tools are discovered at runtime, registered by capability, and selected by the LLM based on context. This enables extensibility without recompilation.
 
 ### Cross-Platform Abstraction
@@ -176,7 +186,7 @@ User runs: cyxmake build
 [Tool Executor] When needed, looks up tool by name → executes with proper path quoting
 ```
 
-## Implementation Status (Phase 1 Complete)
+## Implementation Status
 
 ### ✅ Implemented
 - Core orchestrator with CLI interface
@@ -187,18 +197,21 @@ User runs: cyxmake build
 - Error recovery system (diagnosis, patterns, solution generation)
 - **Tool system (registry, discovery, execution)**
 - **Package manager integration (apt, brew, vcpkg, npm, pip, cargo, winget, etc.)**
+- **Interactive REPL with slash commands, history, tab completion**
+- **Distributed build system (coordinator, workers, scheduler, protocol, auth, cache)**
 
 ### 🚧 Partial/Stub
 - LLM local inference (llama.cpp wrapper exists, model loading needs work)
 - Cloud API fallback (API client exists, needs authentication)
 - Config management (reads TOML, needs validation)
+- Distributed builds require libwebsockets for full functionality (stub mode without)
 
 ### ❌ Not Implemented
 - Natural language project generation
 - Multi-language project support (currently best with C/C++)
-- Interactive shell mode
 - CI/CD integration plugins
 - Sandboxed execution (security feature)
+- Worker daemon executable (workers currently need manual setup)
 
 ## Development Guidelines
 
@@ -292,6 +305,8 @@ log_success("Build completed in %.2fs", duration); // Success messages
 
 ### Optional (System)
 - **CURL**: For cloud API fallback (detected via CMake find_package)
+- **libwebsockets**: For distributed build support (detected via CMake)
+- **OpenSSL**: For TLS support in distributed builds
 - **Sanitizers**: AddressSanitizer/UndefinedBehaviorSanitizer for debugging
 
 ### Tool Discovery (Runtime)
@@ -308,9 +323,19 @@ CyxMake discovers these at runtime via PATH scanning:
 - `project_context.h`: Project semantic representation
 - `llm_interface.h`: LLM abstraction (local + cloud)
 - `error_recovery.h`: Error diagnosis and recovery
-- `tool_executor.h`: **Tool discovery and execution system**
+- `tool_executor.h`: Tool discovery and execution system
+- `slash_commands.h`: REPL command handlers
 - `logger.h`: Logging API
 - `compat.h`: Cross-platform compatibility macros
+
+### Distributed Headers (`include/cyxmake/distributed/`)
+- `distributed.h`: Main distributed API, coordinator/worker interfaces
+- `protocol.h`: Wire protocol message types
+- `network_transport.h`: WebSocket abstraction
+- `worker_registry.h`: Worker management
+- `work_scheduler.h`: Distribution strategies
+- `artifact_cache.h`: Distributed caching
+- `auth.h`: Token authentication
 
 ### Implementation (`src/`)
 Organized by subsystem:
@@ -318,8 +343,10 @@ Organized by subsystem:
 - `context/`: Project analyzer, cache manager, change detector
 - `llm/`: LLM interface, local/cloud implementations, error analyzer
 - `recovery/`: Error diagnosis, patterns, solution generator, fix executor
-- `tools/`: **Tool registry, discovery, executor** ← Phase 1 just completed
-- `cli/`: Command-line interface and argument parsing
+- `tools/`: Tool registry, discovery, executor
+- `cli/`: Command-line interface, REPL, slash commands
+- `distributed/`: Coordinator, workers, scheduler, protocol, auth, cache
+- `agents/`: Multi-agent system (threading, message bus, task queue)
 
 ### Configuration Files
 - `.cyxmake/cache.json`: Per-project context cache (auto-generated)
@@ -412,12 +439,144 @@ The **Interactive REPL** is now fully implemented (All 6 phases complete):
 
 **REPL Complete!** All 6 phases implemented. See `repl.md` for details.
 
+## Distributed Build System
+
+The **Distributed Build System** enables builds to be distributed across multiple remote worker machines using a coordinator-worker architecture.
+
+### Architecture
+
+```
+                         COORDINATOR (Master)
+┌────────────────────────────────────────────────────────────┐
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │
+│  │ Worker       │  │ Work         │  │ Artifact         │  │
+│  │ Registry     │  │ Scheduler    │  │ Cache            │  │
+│  └──────────────┘  └──────────────┘  └──────────────────┘  │
+│                           │                                 │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │  Network Layer: WebSocket Server + Protocol Codec    │  │
+│  └──────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────┘
+                            │ wss://
+        ┌───────────────────┼───────────────────┐
+        ▼                   ▼                   ▼
+┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+│  WORKER 1    │    │  WORKER 2    │    │  WORKER N    │
+│  x86_64-linux│    │  arm64-linux │    │  x64-windows │
+└──────────────┘    └──────────────┘    └──────────────┘
+```
+
+### Distribution Strategies
+
+| Strategy | Description | Use Case |
+|----------|-------------|----------|
+| `compile-units` | Distribute individual source files (distcc-style) | Large C/C++ projects |
+| `targets` | Distribute independent build targets | Multi-target projects |
+| `whole-project` | Send entire project to one worker | CI/CD, cross-compilation |
+| `hybrid` | Auto-select based on project analysis | Default, most projects |
+
+### CLI Commands
+
+```bash
+# Coordinator management
+/coordinator start [--port 9876]   # Start coordinator server
+/coordinator stop                   # Stop coordinator
+/coordinator status                 # Show coordinator status
+/coordinator token                  # Generate worker auth token
+
+# Worker management
+/workers                           # List connected workers
+/workers stats                     # Show worker statistics
+
+# Distributed builds
+/dbuild                            # Build with auto-selected strategy
+/dbuild --strategy compile-units   # Distribute source files
+/dbuild --strategy targets         # Distribute build targets
+/dbuild --jobs 16 --verbose        # Custom parallelism
+```
+
+### Key Components
+
+**Headers** (`include/cyxmake/distributed/`):
+- `distributed.h`: Main API, coordinator/worker client interfaces
+- `protocol.h`: Wire protocol message types and structures
+- `network_transport.h`: WebSocket abstraction layer
+- `worker_registry.h`: Worker management and health monitoring
+- `work_scheduler.h`: Distribution strategies and load balancing
+- `artifact_cache.h`: Distributed caching interface
+- `auth.h`: Token-based authentication
+
+**Key Data Structures**:
+```c
+// Remote worker representation
+typedef struct {
+    char* id;                      // UUID
+    char* name;                    // User-assigned name
+    WorkerState state;             // OFFLINE, ONLINE, BUSY, DRAINING
+    unsigned int capabilities;     // Bitmask (COMPILE_C, CMAKE, etc.)
+    int active_jobs, max_jobs;
+    time_t last_heartbeat;
+} RemoteWorker;
+
+// Distributed job
+typedef struct {
+    char* job_id;
+    char* job_type;                // "compile", "link", "full_build"
+    DistributionStrategy strategy;
+    int priority;
+    int timeout_sec;
+} DistributedJob;
+
+// Coordinator config
+typedef struct {
+    uint16_t port;                 // Listen port (default: 9876)
+    AuthMethod auth_method;        // Token-based auth
+    DistributionStrategy default_strategy;
+    LoadBalancingAlgorithm lb_algorithm;
+    int max_workers;
+    bool enable_cache;
+} DistributedCoordinatorConfig;
+```
+
+### Building with Distributed Support
+
+```bash
+# Install libwebsockets (required for full functionality)
+# Ubuntu/Debian:
+sudo apt install libwebsockets-dev
+
+# macOS:
+brew install libwebsockets
+
+# Then build with distributed support enabled:
+cmake .. -DCYXMAKE_ENABLE_DISTRIBUTED=ON
+cmake --build .
+```
+
+Without libwebsockets, stub implementations are used and CLI commands will report "coordinator not running".
+
+### Protocol
+
+Messages use JSON over WebSocket:
+```json
+{
+  "type": "JOB_REQUEST",
+  "id": "msg-uuid",
+  "timestamp": 1703577600000,
+  "sender": "coordinator",
+  "payload": { ... }
+}
+```
+
+Message types: `HELLO`, `WELCOME`, `HEARTBEAT`, `JOB_REQUEST`, `JOB_COMPLETE`, `JOB_FAILED`, `ARTIFACT_REQUEST`, etc.
+
 ## Notes for Future Claude Instances
 
 - **Phase 0 (Foundation)**: Complete - basic structure, logging, project analysis
 - **Phase 1 (Tool Integration)**: Complete - tool discovery, registry, execution, package managers
 - **Phase 2 (Error Recovery Integration)**: In Progress - connect tools to error recovery system
 - **REPL System**: Complete - all 6 phases implemented (input, commands, permissions, context, enhanced terminal, action planning)
+- **Distributed Builds**: Complete - coordinator, workers, scheduler, protocol, auth, cache, CLI commands
 - **LLM Integration**: Partial - interface exists, needs model loading and inference work
 - **Code Quality**: Memory-safe C with comprehensive error handling, cross-platform tested
 - **Testing**: Each component has dedicated test suite, run before committing
