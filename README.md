@@ -433,7 +433,37 @@ cmake --build .
 ./bin/Release/cyxmake.exe  # Windows
 ```
 
+### Pre-Build: Install Optional Dependencies with vcpkg
+
+For full functionality (cloud AI and distributed builds), install optional dependencies using vcpkg:
+
+```bash
+# Bootstrap vcpkg in the project (one-time setup)
+git clone https://github.com/microsoft/vcpkg.git external/vcpkg --depth 1
+cd external/vcpkg
+
+# Windows
+./bootstrap-vcpkg.bat
+
+# Linux/macOS
+./bootstrap-vcpkg.sh
+
+# Install all optional dependencies
+cd ../..
+./external/vcpkg/vcpkg install curl:x64-windows libwebsockets:x64-windows    # Windows
+./external/vcpkg/vcpkg install curl libwebsockets                             # Linux/macOS
+
+# Build with vcpkg toolchain and all features enabled
+mkdir build && cd build
+cmake .. -DCMAKE_TOOLCHAIN_FILE=../external/vcpkg/scripts/buildsystems/vcpkg.cmake \
+         -DCMAKE_BUILD_TYPE=Release \
+         -DCYXMAKE_ENABLE_DISTRIBUTED=ON
+cmake --build .
+```
+
 ### Optional: Install CURL for Cloud AI Providers
+
+Cloud AI providers (OpenAI, Anthropic, Ollama, etc.) require CURL:
 
 ```bash
 # Ubuntu/Debian
@@ -443,10 +473,12 @@ sudo apt install libcurl4-openssl-dev
 brew install curl
 
 # Windows (vcpkg)
-vcpkg install curl:x64-windows
+./external/vcpkg/vcpkg install curl:x64-windows
 ```
 
 ### Optional: Install libwebsockets for Distributed Builds
+
+Distributed builds across multiple machines require libwebsockets:
 
 ```bash
 # Ubuntu/Debian
@@ -454,6 +486,9 @@ sudo apt install libwebsockets-dev
 
 # macOS
 brew install libwebsockets
+
+# Windows (vcpkg)
+./external/vcpkg/vcpkg install libwebsockets:x64-windows
 
 # Build with distributed support
 cmake .. -DCYXMAKE_ENABLE_DISTRIBUTED=ON

@@ -108,13 +108,24 @@ endif()
 
 # Find libwebsockets for distributed builds
 if(CYXMAKE_ENABLE_DISTRIBUTED)
-    find_package(PkgConfig QUIET)
-    if(PKG_CONFIG_FOUND)
-        pkg_check_modules(LIBWEBSOCKETS libwebsockets)
+    # First try vcpkg/CMake config mode
+    find_package(libwebsockets CONFIG QUIET)
+    if(libwebsockets_FOUND)
+        set(LIBWEBSOCKETS_FOUND TRUE)
+        set(LIBWEBSOCKETS_LIBRARIES websockets_shared)
+        message(STATUS "Found libwebsockets via CMake config")
     endif()
 
+    # Fall back to pkg-config
     if(NOT LIBWEBSOCKETS_FOUND)
-        # Try manual search
+        find_package(PkgConfig QUIET)
+        if(PKG_CONFIG_FOUND)
+            pkg_check_modules(LIBWEBSOCKETS libwebsockets)
+        endif()
+    endif()
+
+    # Fall back to manual search
+    if(NOT LIBWEBSOCKETS_FOUND)
         find_path(LIBWEBSOCKETS_INCLUDE_DIR libwebsockets.h
             PATHS /usr/include /usr/local/include /opt/local/include
         )

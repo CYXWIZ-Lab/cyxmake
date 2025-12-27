@@ -343,7 +343,11 @@ static void on_build_completed(WorkScheduler* scheduler,
  * ============================================================ */
 
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-static THREAD_RETURN_TYPE THREAD_CALL_CONVENTION heartbeat_thread(void* arg) {
+#ifdef CYXMAKE_WINDOWS
+static DWORD WINAPI heartbeat_thread_func(LPVOID arg) {
+#else
+static void* heartbeat_thread_func(void* arg) {
+#endif
     Coordinator* coord = (Coordinator*)arg;
 
     while (coord->running) {
@@ -357,14 +361,14 @@ static THREAD_RETURN_TYPE THREAD_CALL_CONVENTION heartbeat_thread(void* arg) {
         scheduler_process_queue(coord->scheduler);
 
         /* Sleep for heartbeat interval */
-#ifdef _WIN32
-        Sleep(coord->config.heartbeat_interval_sec * 1000);
-#else
-        sleep(coord->config.heartbeat_interval_sec);
-#endif
+        thread_sleep(coord->config.heartbeat_interval_sec * 1000);
     }
 
-    return (THREAD_RETURN_TYPE)0;
+#ifdef CYXMAKE_WINDOWS
+    return 0;
+#else
+    return NULL;
+#endif
 }
 #endif
 
@@ -405,8 +409,7 @@ Coordinator* distributed_coordinator_create(const DistributedCoordinatorConfig* 
     }
 
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    coord->mutex = mutex_create();
-    if (!coord->mutex) {
+    if (!mutex_init(&coord->mutex)) {
         log_error("Failed to create coordinator mutex");
         distributed_coordinator_free(coord);
         return NULL;
@@ -539,9 +542,7 @@ void distributed_coordinator_free(Coordinator* coord) {
     }
 
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    if (coord->mutex) {
-        mutex_destroy(coord->mutex);
-    }
+    mutex_destroy(&coord->mutex);
 #endif
 
     distributed_coordinator_config_free(&coord->config);
@@ -582,8 +583,7 @@ bool coordinator_start(Coordinator* coord) {
 
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
     /* Start heartbeat/maintenance thread */
-    coord->heartbeat_thread = thread_create(heartbeat_thread, coord);
-    if (!coord->heartbeat_thread) {
+    if (!thread_create(&coord->heartbeat_thread, (ThreadFunc)heartbeat_thread_func, coord)) {
         log_warning("Failed to start heartbeat thread");
     }
 #endif
@@ -678,7 +678,7 @@ char* coordinator_generate_worker_token(Coordinator* coord,
     }
 
     AuthToken* token = auth_token_generate(coord->auth,
-                                            AUTH_TOKEN_WORKER,
+                                            AUTH_TOKEN_TYPE_WORKER,
                                             worker_name,
                                             ttl_sec);
     if (!token) {
@@ -686,7 +686,7 @@ char* coordinator_generate_worker_token(Coordinator* coord,
         return NULL;
     }
 
-    char* token_str = token->token ? CYXMAKE_STRDUP(token->token) : NULL;
+    char* token_str = token->token_value ? strdup(token->token_value) : NULL;
     auth_token_free(token);
     return token_str;
 #else

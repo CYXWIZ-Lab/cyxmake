@@ -61,9 +61,7 @@ struct AuthContext {
 
 static void context_lock(AuthContext* ctx) {
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    if (ctx->mutex) {
-        mutex_lock(ctx->mutex);
-    }
+    mutex_lock(&ctx->mutex);
 #else
     (void)ctx;
 #endif
@@ -71,9 +69,7 @@ static void context_lock(AuthContext* ctx) {
 
 static void context_unlock(AuthContext* ctx) {
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    if (ctx->mutex) {
-        mutex_unlock(ctx->mutex);
-    }
+    mutex_unlock(&ctx->mutex);
 #else
     (void)ctx;
 #endif
@@ -256,8 +252,7 @@ AuthContext* auth_context_create(const AuthConfig* config) {
     }
 
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    ctx->mutex = mutex_create();
-    if (!ctx->mutex) {
+    if (!mutex_init(&ctx->mutex)) {
         log_error("Failed to create auth context mutex");
         auth_context_free(ctx);
         return NULL;
@@ -285,9 +280,7 @@ void auth_context_free(AuthContext* ctx) {
     auth_config_free(&ctx->config);
 
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    if (ctx->mutex) {
-        mutex_destroy(ctx->mutex);
-    }
+    mutex_destroy(&ctx->mutex);
 #endif
 
     free(ctx);

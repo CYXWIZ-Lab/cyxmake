@@ -70,9 +70,7 @@ struct WorkScheduler {
 
 static void scheduler_lock(WorkScheduler* scheduler) {
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    if (scheduler->mutex) {
-        mutex_lock(scheduler->mutex);
-    }
+    mutex_lock(&scheduler->mutex);
 #else
     (void)scheduler;
 #endif
@@ -80,9 +78,7 @@ static void scheduler_lock(WorkScheduler* scheduler) {
 
 static void scheduler_unlock(WorkScheduler* scheduler) {
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    if (scheduler->mutex) {
-        mutex_unlock(scheduler->mutex);
-    }
+    mutex_unlock(&scheduler->mutex);
 #else
     (void)scheduler;
 #endif
@@ -368,8 +364,7 @@ WorkScheduler* scheduler_create(const SchedulerConfig* config,
     scheduler->worker_registry = worker_registry;
 
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    scheduler->mutex = mutex_create();
-    if (!scheduler->mutex) {
+    if (!mutex_init(&scheduler->mutex)) {
         log_error("Failed to create scheduler mutex");
         free(scheduler);
         return NULL;
@@ -413,9 +408,7 @@ void scheduler_free(WorkScheduler* scheduler) {
     }
 
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    if (scheduler->mutex) {
-        mutex_destroy(scheduler->mutex);
-    }
+    mutex_destroy(&scheduler->mutex);
 #endif
 
     free(scheduler);

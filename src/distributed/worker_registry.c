@@ -88,9 +88,7 @@ static char* generate_worker_id(void) {
 
 static void registry_lock(WorkerRegistry* registry) {
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    if (registry->mutex) {
-        mutex_lock(registry->mutex);
-    }
+    mutex_lock(&registry->mutex);
 #else
     (void)registry;
 #endif
@@ -98,9 +96,7 @@ static void registry_lock(WorkerRegistry* registry) {
 
 static void registry_unlock(WorkerRegistry* registry) {
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    if (registry->mutex) {
-        mutex_unlock(registry->mutex);
-    }
+    mutex_unlock(&registry->mutex);
 #else
     (void)registry;
 #endif
@@ -238,8 +234,7 @@ WorkerRegistry* worker_registry_create(const WorkerRegistryConfig* config) {
     }
 
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    registry->mutex = mutex_create();
-    if (!registry->mutex) {
+    if (!mutex_init(&registry->mutex)) {
         log_error("Failed to create registry mutex");
         free(registry);
         return NULL;
@@ -264,9 +259,7 @@ void worker_registry_free(WorkerRegistry* registry) {
     }
 
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    if (registry->mutex) {
-        mutex_destroy(registry->mutex);
-    }
+    mutex_destroy(&registry->mutex);
 #endif
 
     free(registry);

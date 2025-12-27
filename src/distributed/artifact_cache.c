@@ -64,9 +64,7 @@ struct ArtifactCache {
 
 static void cache_lock(ArtifactCache* cache) {
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    if (cache->mutex) {
-        mutex_lock(cache->mutex);
-    }
+    mutex_lock(&cache->mutex);
 #else
     (void)cache;
 #endif
@@ -74,9 +72,7 @@ static void cache_lock(ArtifactCache* cache) {
 
 static void cache_unlock(ArtifactCache* cache) {
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    if (cache->mutex) {
-        mutex_unlock(cache->mutex);
-    }
+    mutex_unlock(&cache->mutex);
 #else
     (void)cache;
 #endif
@@ -287,8 +283,7 @@ ArtifactCache* artifact_cache_create(const ArtifactCacheConfig* config) {
     }
 
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    cache->mutex = mutex_create();
-    if (!cache->mutex) {
+    if (!mutex_init(&cache->mutex)) {
         log_error("Failed to create cache mutex");
         artifact_cache_free(cache);
         return NULL;
@@ -312,9 +307,7 @@ void artifact_cache_free(ArtifactCache* cache) {
     artifact_cache_config_free(&cache->config);
 
 #ifdef CYXMAKE_ENABLE_DISTRIBUTED
-    if (cache->mutex) {
-        mutex_destroy(cache->mutex);
-    }
+    mutex_destroy(&cache->mutex);
 #endif
 
     free(cache);

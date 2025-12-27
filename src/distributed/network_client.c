@@ -192,7 +192,7 @@ static bool queue_message(NetworkClient* client, const uint8_t* data, size_t len
     entry->len = len;
     entry->next = NULL;
 
-    mutex_lock(client->queue_mutex);
+    mutex_lock(&client->queue_mutex);
 
     if (client->msg_queue_tail) {
         client->msg_queue_tail->next = entry;
@@ -202,7 +202,7 @@ static bool queue_message(NetworkClient* client, const uint8_t* data, size_t len
     client->msg_queue_tail = entry;
     client->msg_queue_count++;
 
-    mutex_unlock(client->queue_mutex);
+    mutex_unlock(&client->queue_mutex);
 
     /* Request write callback */
     if (client->wsi) {
@@ -213,7 +213,7 @@ static bool queue_message(NetworkClient* client, const uint8_t* data, size_t len
 }
 
 static MessageQueueEntry* dequeue_message(NetworkClient* client) {
-    mutex_lock(client->queue_mutex);
+    mutex_lock(&client->queue_mutex);
 
     MessageQueueEntry* entry = client->msg_queue_head;
     if (entry) {
@@ -224,7 +224,7 @@ static MessageQueueEntry* dequeue_message(NetworkClient* client) {
         client->msg_queue_count--;
     }
 
-    mutex_unlock(client->queue_mutex);
+    mutex_unlock(&client->queue_mutex);
     return entry;
 }
 
@@ -303,9 +303,12 @@ static int callback_cyxmake_client(struct lws* wsi, enum lws_callback_reasons re
 
             /* Check for final fragment */
             if (lws_is_final_fragment(wsi)) {
+                /* Null-terminate the buffer for parsing */
+                client->rx_buffer[client->rx_buffer_used] = '\0';
+
                 /* Parse complete message */
                 ProtocolMessage* msg = protocol_message_deserialize(
-                    (const char*)client->rx_buffer, client->rx_buffer_used);
+                    (const char*)client->rx_buffer);
 
                 if (msg) {
                     if (client->callbacks.on_message) {
@@ -406,7 +409,11 @@ static const struct lws_protocols client_protocols[] = {
     { NULL, NULL, 0, 0 }
 };
 
-static THREAD_RETURN_TYPE THREAD_CALL_CONVENTION client_service_thread(void* arg) {
+#ifdef CYXMAKE_WINDOWS
+static DWORD WINAPI client_service_thread_func(LPVOID arg) {
+#else
+static void* client_service_thread_func(void* arg) {
+#endif
     NetworkClient* client = (NetworkClient*)arg;
 
     log_debug("Client service thread started");
@@ -419,11 +426,7 @@ static THREAD_RETURN_TYPE THREAD_CALL_CONVENTION client_service_thread(void* arg
                          client->reconnect_attempts + 1, client->max_reconnect_attempts);
 
                 /* Wait before reconnecting */
-#ifdef _WIN32
-                Sleep(client->reconnect_delay_ms);
-#else
-                usleep(client->reconnect_delay_ms * 1000);
-#endif
+                thread_sleep(client->reconnect_delay_ms);
 
                 /* Attempt connection */
                 struct lws_client_connect_info ccinfo = {0};
@@ -459,7 +462,11 @@ static THREAD_RETURN_TYPE THREAD_CALL_CONVENTION client_service_thread(void* arg
     }
 
     log_debug("Client service thread exiting");
-    return (THREAD_RETURN_TYPE)0;
+#ifdef CYXMAKE_WINDOWS
+    return 0;
+#else
+    return NULL;
+#endif
 }
 
 /* ============================================================
@@ -506,8 +513,7 @@ NetworkClient* network_client_create(const NetworkConfig* config) {
     }
 
     /* Create queue mutex */
-    client->queue_mutex = mutex_create();
-    if (!client->queue_mutex) {
+    if (!mutex_init(&client->queue_mutex)) {
         log_error("Failed to create queue mutex");
         free(client->rx_buffer);
         free(client);
@@ -597,9 +603,7 @@ bool network_client_connect(NetworkClient* client, const char* url) {
 
     /* Start service thread */
     client->running = true;
-    client->service_thread = thread_create(client_service_thread, client);
-
-    if (!client->service_thread) {
+    if (!thread_create(&client->service_thread, (ThreadFunc)client_service_thread_func, client)) {
         log_error("Failed to create service thread");
         client->running = false;
         lws_context_destroy(client->context);
@@ -649,9 +653,7 @@ void network_client_free(NetworkClient* client) {
     clear_message_queue(client);
 
     /* Free resources */
-    if (client->queue_mutex) {
-        mutex_destroy(client->queue_mutex);
-    }
+    mutex_destroy(&client->queue_mutex);
 
     free(client->rx_buffer);
     free(client->url);
@@ -678,14 +680,14 @@ bool network_client_send(NetworkClient* client, ProtocolMessage* msg) {
     }
 
     /* Serialize message */
-    size_t json_len;
-    char* json = protocol_message_serialize(msg, &json_len);
+    char* json = protocol_message_serialize(msg);
     if (!json) {
         log_error("Failed to serialize message");
         return false;
     }
 
     /* Queue for sending */
+    size_t json_len = strlen(json);
     bool result = queue_message(client, (const uint8_t*)json, json_len);
     free(json);
 
